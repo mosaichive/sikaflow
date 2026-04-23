@@ -7,8 +7,8 @@ import { formatCurrency } from '@/lib/constants';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertTriangle,
   ArrowRight,
@@ -22,7 +22,6 @@ import {
   TrendingUp,
   Users,
   Wallet,
-  X,
 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { SubscriptionBanner } from '@/components/SubscriptionBanner';
@@ -31,18 +30,25 @@ import { useBusiness } from '@/context/BusinessContext';
 import { useSubscription } from '@/context/SubscriptionContext';
 import { toast } from 'sonner';
 import { QuickTour } from '@/components/QuickTour';
-import { cn } from '@/lib/utils';
 
 const DAY_MS = 86400000;
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-function todayInputValue() {
-  return new Date().toISOString().slice(0, 10);
+function formatUtcDate(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
-function daysAgoInputValue(days: number) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return date.toISOString().slice(0, 10);
+function getMonthRange(month: number, year: number) {
+  const start = new Date(Date.UTC(year, month, 1));
+  const end = new Date(Date.UTC(year, month + 1, 0));
+  return {
+    from: formatUtcDate(start),
+    to: formatUtcDate(end),
+    label: `${MONTH_NAMES[month]} ${year}`,
+  };
 }
 
 interface Sale {
@@ -127,12 +133,6 @@ function inDateRange(dateStr: string, from: string, to: string): boolean {
   return date >= start && date <= end;
 }
 
-function formatDateRange(from: string, to: string) {
-  if (!from || !to) return 'All dates';
-  const formatOptions: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
-  return `${new Date(`${from}T00:00:00`).toLocaleDateString('en-GB', formatOptions)} - ${new Date(`${to}T00:00:00`).toLocaleDateString('en-GB', formatOptions)}`;
-}
-
 function calcMetrics(
   sales: Sale[],
   expenses: Expense[],
@@ -178,6 +178,7 @@ function calcMetrics(
 }
 
 export default function Dashboard() {
+  const now = new Date();
   const [raw, setRaw] = useState<RawData>({
     sales: [],
     expenses: [],
@@ -188,13 +189,20 @@ export default function Dashboard() {
     funding: [],
     restocks: [],
   });
-  const [dateFrom, setDateFrom] = useState(() => daysAgoInputValue(6));
-  const [dateTo, setDateTo] = useState(() => todayInputValue());
+  const [selectedMonth, setSelectedMonth] = useState(() => String(now.getMonth()));
+  const [selectedYear, setSelectedYear] = useState(() => String(now.getFullYear()));
   const [chartType, setChartType] = useState<'bar' | 'line'>('bar');
   const [tourOpen, setTourOpen] = useState(false);
   const { business } = useBusiness();
   const { subscription, isReadOnly } = useSubscription();
   const navigate = useNavigate();
+
+  const selectedRange = useMemo(
+    () => getMonthRange(Number(selectedMonth), Number(selectedYear)),
+    [selectedMonth, selectedYear],
+  );
+  const dateFrom = selectedRange.from;
+  const dateTo = selectedRange.to;
 
   const fetchData = useCallback(async () => {
     const [salesRes, expensesRes, productsRes, saleItemsRes, savingsRes, investRes, fundingRes, restockRes] = await Promise.all([
@@ -272,7 +280,10 @@ export default function Dashboard() {
     return () => clearTimeout(timer);
   }, [isReadOnly, navigate, subscription]);
 
-  const hasFilter = !!dateFrom && !!dateTo;
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const isCurrentMonth = Number(selectedMonth) === currentMonth && Number(selectedYear) === currentYear;
+  const hasFilter = true;
   const overall = useMemo(
     () => calcMetrics(raw.sales, raw.expenses, raw.products, raw.saleItems, raw.savings, raw.investments, raw.funding, raw.restocks),
     [raw],
@@ -329,7 +340,25 @@ export default function Dashboard() {
   }, [raw.sales]);
 
   const activeMetrics = filtered ?? overall;
-  const filterLabel = hasFilter ? formatDateRange(dateFrom, dateTo) : 'Last 7 days and all-time totals';
+  const filterLabel = selectedRange.label;
+  const availableYears = useMemo(() => {
+    const years = new Set<number>([currentYear]);
+    const dates = [
+      ...raw.sales.map((sale) => sale.sale_date),
+      ...raw.expenses.map((expense) => expense.expense_date),
+      ...raw.savings.map((saving) => saving.savings_date),
+      ...raw.investments.map((investment) => investment.investment_date),
+      ...raw.funding.map((funding) => funding.date_received),
+      ...raw.restocks.map((restock) => restock.restock_date),
+    ];
+
+    for (const value of dates) {
+      const date = new Date(value);
+      if (!Number.isNaN(date.getTime())) years.add(date.getFullYear());
+    }
+
+    return Array.from(years).sort((left, right) => right - left);
+  }, [currentYear, raw.expenses, raw.funding, raw.investments, raw.restocks, raw.sales, raw.savings]);
 
   return (
     <AppLayout title="Dashboard">
@@ -341,7 +370,7 @@ export default function Dashboard() {
         <section className="rounded-lg border border-border bg-card p-4 sm:p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-primary">Today</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary">{filterLabel}</p>
               <h2 className="mt-1 text-2xl font-bold">{business?.name ?? 'Your business'} dashboard</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 Focus on cash, sales, stock, and the next action.
@@ -349,16 +378,38 @@ export default function Dashboard() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="grid gap-1">
-                <Label htmlFor="dashboard-from" className="text-[10px] uppercase tracking-wider text-muted-foreground">From</Label>
-                <Input id="dashboard-from" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="h-10 w-[150px]" />
+                <Label htmlFor="dashboard-month" className="text-[10px] uppercase tracking-wider text-muted-foreground">Month</Label>
+                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                  <SelectTrigger id="dashboard-month" className="h-10 w-[160px]">
+                    <SelectValue placeholder="Month" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MONTH_NAMES.map((month, index) => (
+                      <SelectItem key={month} value={String(index)}>
+                        {month}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid gap-1">
-                <Label htmlFor="dashboard-to" className="text-[10px] uppercase tracking-wider text-muted-foreground">To</Label>
-                <Input id="dashboard-to" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="h-10 w-[150px]" />
+                <Label htmlFor="dashboard-year" className="text-[10px] uppercase tracking-wider text-muted-foreground">Year</Label>
+                <Select value={selectedYear} onValueChange={setSelectedYear}>
+                  <SelectTrigger id="dashboard-year" className="h-10 w-[120px]">
+                    <SelectValue placeholder="Year" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableYears.map((year) => (
+                      <SelectItem key={year} value={String(year)}>
+                        {year}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              {hasFilter && (
-                <Button variant="ghost" size="sm" onClick={() => { setDateFrom(daysAgoInputValue(6)); setDateTo(todayInputValue()); }}>
-                  <X className="mr-1 h-4 w-4" /> Clear
+              {!isCurrentMonth && (
+                <Button variant="ghost" size="sm" onClick={() => { setSelectedMonth(String(currentMonth)); setSelectedYear(String(currentYear)); }}>
+                  This month
                 </Button>
               )}
               <Button variant="outline" size="sm" onClick={() => setTourOpen(true)} className="hidden sm:inline-flex">
@@ -394,8 +445,8 @@ export default function Dashboard() {
 
         <section className="grid gap-3 md:grid-cols-4">
           <DashboardStat
-            title={hasFilter ? 'Period sales' : 'This month'}
-            value={formatCurrency(hasFilter ? activeMetrics.totalRevenue : todayMetrics.monthlySales)}
+            title="Month sales"
+            value={formatCurrency(activeMetrics.totalRevenue)}
             detail={filterLabel}
             icon={DollarSign}
           />
@@ -427,7 +478,7 @@ export default function Dashboard() {
             <CardHeader className="flex flex-row items-start justify-between gap-3">
               <div>
                 <CardTitle className="text-base">
-                  {hasFilter ? 'Sales trend' : 'Sales this week'}
+                  Sales trend
                 </CardTitle>
                 <p className="mt-1 text-xs text-muted-foreground">{filterLabel}</p>
               </div>

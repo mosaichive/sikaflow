@@ -110,15 +110,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) {
       console.warn('Unable to load user role. Check Supabase auth and RLS policies.', error.message);
       setRole(null);
-      return;
+      return null;
     }
 
-    setRole((data?.role as AppRole) || null);
+    const nextRole = (data?.role as AppRole) || null;
+    setRole(nextRole);
+    return nextRole;
   }, []);
 
   const fetchProfile = useCallback(async (userId?: string) => {
     const uid = userId || user?.id;
-    if (!uid) return;
+    if (!uid) return { found: false, error: false };
 
     const { data, error } = await supabase
       .from('profiles')
@@ -129,7 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) {
       console.warn('Unable to load user profile. Check Supabase auth and RLS policies.', error.message);
       setProfile(emptyProfile);
-      return;
+      return { found: false, error: true };
     }
 
     setProfile(data ? {
@@ -139,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       phone: data.phone || '',
       bio: data.bio || '',
     } : emptyProfile);
+    return { found: !!data, error: false };
   }, [user?.id]);
 
   useEffect(() => {
@@ -155,7 +158,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setProfileLoading(true);
-      await Promise.all([fetchRole(user.id), fetchProfile(user.id)]);
+      const [nextRole, profileResult] = await Promise.all([fetchRole(user.id), fetchProfile(user.id)]);
+
+      if (!cancelled && profileResult && !profileResult.found && !profileResult.error && !nextRole) {
+        await supabase.auth.signOut();
+        if (typeof window !== 'undefined') {
+          window.location.replace('/sign-in?reason=removed');
+        }
+        return;
+      }
+
       if (!cancelled) setProfileLoading(false);
     }
 
@@ -185,7 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profilePhone: profile.phone,
       profileBio: profile.bio,
       signOut,
-      refreshProfile: () => fetchProfile(),
+      refreshProfile: async () => { await fetchProfile(); },
       isAdmin: role === 'admin' || role === 'super_admin',
       isManager: role === 'manager',
     }}>

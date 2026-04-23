@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { BusinessProvider, useBusiness } from "@/context/BusinessContext";
 import { SubscriptionProvider, useSubscription } from "@/context/SubscriptionContext";
 import { SignInPage, SignUpPage } from "./pages/SignInPage";
+import AuthCallbackPage from "./pages/AuthCallbackPage";
 import Dashboard from "./pages/Dashboard";
 import SalesPage from "./pages/SalesPage";
 import ProductsPage from "./pages/ProductsPage";
@@ -91,6 +92,7 @@ const App = () => (
               <Routes>
                 <Route path="/sign-in/*" element={<AuthRoute><SignInPage /></AuthRoute>} />
                 <Route path="/sign-up/*" element={<AuthRoute><SignUpPage /></AuthRoute>} />
+                <Route path="/auth/callback" element={<AuthCallbackPage />} />
                 <Route path="/auth/*" element={<Navigate to="/sign-in" replace />} />
                 <Route path="/reset-password" element={<Navigate to="/sign-in" replace />} />
                 <Route path="/change-password" element={<Navigate to="/dashboard" replace />} />

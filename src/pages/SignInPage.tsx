@@ -13,6 +13,17 @@ import { cn } from '@/lib/utils';
 
 type AuthMode = 'sign-in' | 'sign-up';
 
+function mapOAuthError(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('provider is not enabled')) {
+    return 'This sign-in method is not enabled in Supabase yet. Turn on the provider and add the Vercel callback URL.';
+  }
+  if (normalized.includes('redirect') && normalized.includes('url')) {
+    return 'The OAuth callback URL is not allowed yet. Add your Vercel URL to Supabase Auth redirect URLs and try again.';
+  }
+  return message;
+}
+
 function AuthShell({ children }: { children: ReactNode }) {
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -67,12 +78,14 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
 
   const redirectTo = useMemo(() => {
     if (typeof window === 'undefined') return '/dashboard';
-    return `${window.location.origin}/dashboard`;
-  }, []);
+    const from = (location.state as { from?: string } | null)?.from;
+    const nextPath = from && !from.startsWith('/sign-') && !from.startsWith('/auth') ? from : '/dashboard';
+    return `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`;
+  }, [location.state]);
 
   const afterAuthPath = useMemo(() => {
     const from = (location.state as { from?: string } | null)?.from;
-    return from && !from.startsWith('/sign-') && from !== '/auth' ? from : '/dashboard';
+    return from && !from.startsWith('/sign-') && !from.startsWith('/auth') ? from : '/dashboard';
   }, [location.state]);
 
   const switchMode = (nextMode: AuthMode) => {
@@ -139,10 +152,19 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
     setOauthProvider(provider);
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo },
+      options: {
+        redirectTo,
+        scopes: provider === 'apple' ? 'name email' : undefined,
+        queryParams: provider === 'google'
+          ? {
+              access_type: 'offline',
+              prompt: 'select_account',
+            }
+          : undefined,
+      },
     });
     if (oauthError) {
-      setError(oauthError.message);
+      setError(mapOAuthError(oauthError.message));
       setOauthProvider(null);
     }
   };
@@ -195,7 +217,7 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
           disabled={submitting || !!oauthProvider}
         >
           {oauthProvider === 'google' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Chrome className="h-4 w-4" />}
-          Google
+          Continue with Google
         </Button>
         <Button
           type="button"
@@ -205,9 +227,17 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
           disabled={submitting || !!oauthProvider}
         >
           {oauthProvider === 'apple' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Apple className="h-4 w-4" />}
-          Apple
+          Continue with Apple
         </Button>
       </div>
+
+      {location.search.includes('reason=removed') && (
+        <Alert className="mt-4">
+          <AlertDescription>
+            This account was removed from SikaFlow. Sign up again, or ask an admin to invite you back.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="my-5 flex items-center gap-3">
         <span className="h-px flex-1 bg-border" />

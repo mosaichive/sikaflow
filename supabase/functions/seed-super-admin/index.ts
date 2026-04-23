@@ -1,4 +1,4 @@
-// Seeds the platform Super Admin (admin@saletallysystem.com).
+// Seeds the platform Super Admin (admin@sikaflow.com).
 // Idempotent: if the user already exists, only ensures the super_admin role
 // and the must_change_password flag are present. Safe to call repeatedly.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
@@ -9,8 +9,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type",
 };
 
-const SUPER_ADMIN_EMAIL = "admin@saletallysystem.com";
-// Initial password — user is forced to change on first login.
+const SUPER_ADMIN_EMAIL = "admin@sikaflow.com";
+const LEGACY_SUPER_ADMIN_EMAIL = "admin@saletallysystem.com";
+// Initial password.
 const INITIAL_PASSWORD = "@H!ve0107";
 
 Deno.serve(async (req) => {
@@ -25,17 +26,19 @@ Deno.serve(async (req) => {
     // 1. Find or create the auth user
     let userId: string | null = null;
     const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
-    const existing = list?.users?.find((u) => u.email?.toLowerCase() === SUPER_ADMIN_EMAIL);
+    const existing = list?.users?.find((u) => {
+      const email = u.email?.toLowerCase();
+      return email === SUPER_ADMIN_EMAIL || email === LEGACY_SUPER_ADMIN_EMAIL;
+    });
 
     if (existing) {
       userId = existing.id;
-      // Make sure the must_change_password flag is set if it's the very first time
       const meta = (existing.user_metadata ?? {}) as Record<string, unknown>;
-      if (meta.must_change_password === undefined) {
-        await admin.auth.admin.updateUserById(userId, {
-          user_metadata: { ...meta, must_change_password: true, is_super_admin: true, display_name: "Platform Admin" },
-        });
-      }
+      await admin.auth.admin.updateUserById(userId, {
+        email: SUPER_ADMIN_EMAIL,
+        password: INITIAL_PASSWORD,
+        user_metadata: { ...meta, must_change_password: true, is_super_admin: true, display_name: "Platform Admin" },
+      });
     } else {
       const { data: created, error: createErr } = await admin.auth.admin.createUser({
         email: SUPER_ADMIN_EMAIL,

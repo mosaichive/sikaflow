@@ -1,6 +1,7 @@
 // Admin-only edge function for per-business user management.
-// Supports: invite (with password OR email invite link) and remove (detach from business).
-// All actions are scoped to the caller's business and require admin role.
+// Supports: invite (with password OR email invite link) and remove.
+// Remove preserves historical business records, then deletes the auth account
+// so the same email can sign up again later if needed.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
@@ -160,19 +161,39 @@ Deno.serve(async (req) => {
       return json(404, { error: 'User is not a member of your business' });
     }
 
-    // Detach: clear business_id and delete role rows for this business
-    await admin.from('user_roles').delete().eq('user_id', user_id).eq('business_id', businessId);
-    await admin.from('profiles').update({ business_id: null }).eq('user_id', user_id);
+    const targetName = target.display_name || 'Former team member';
+    const { data: authUsers } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
+    const targetAuthUser = authUsers?.users?.find((entry) => entry.id === user_id);
+
+    // Keep historical records intact by re-linking the hard FK fields before deleting auth.users.
+    const { error: salesError } = await admin
+      .from('sales')
+      .update({ staff_id: callerId, staff_name: targetName })
+      .eq('business_id', businessId)
+      .eq('staff_id', user_id);
+    if (salesError) return json(500, { error: salesError.message });
+
+    const { error: expensesError } = await admin
+      .from('expenses')
+      .update({ recorded_by: callerId, recorded_by_name: targetName })
+      .eq('business_id', businessId)
+      .eq('recorded_by', user_id);
+    if (expensesError) return json(500, { error: expensesError.message });
+
+    const { error: deleteError } = await admin.auth.admin.deleteUser(user_id);
+    if (deleteError) {
+      return json(500, { error: deleteError.message || 'Failed to delete auth user' });
+    }
 
     await admin.from('audit_log').insert({
       action: 'user_removed',
-      details: `Removed ${target.display_name || user_id} from business`,
+      details: `Removed ${targetName}${targetAuthUser?.email ? ` (${targetAuthUser.email})` : ''} from business`,
       performed_by: callerId,
       performed_by_name: callerProfile?.display_name || '',
       business_id: businessId,
     });
 
-    return json(200, { ok: true });
+    return json(200, { ok: true, removed_user_id: user_id });
   }
 
   return json(400, { error: 'Unknown action' });

@@ -351,7 +351,7 @@ export default function SettingsPage() {
       const msg = (data as any)?.error || error?.message || 'Failed to remove user';
       toast({ title: 'Could not remove user', description: msg, variant: 'destructive' });
     } else {
-      toast({ title: 'User removed', description: 'They no longer have access to this workspace.' });
+      toast({ title: 'User removed', description: 'Their access has been revoked and they will need a fresh signup or invite to come back.' });
       fetchUsers();
     }
     setRemoveUserId(null);
@@ -835,7 +835,7 @@ export default function SettingsPage() {
             <AlertDialogHeader>
               <AlertDialogTitle>Remove user from {businessName}?</AlertDialogTitle>
               <AlertDialogDescription>
-                They will immediately lose access to this workspace. Their historical sales and activity stay intact. Their account is not deleted — they can be re-invited later.
+                They will immediately lose access to this workspace. Historical sales and activity stay intact, but their login is removed so they must sign up again or be invited back later.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
