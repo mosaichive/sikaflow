@@ -165,10 +165,24 @@ function getMonthRange(month: number, year: number) {
   };
 }
 
+function getYearRange(year: number) {
+  const start = new Date(Date.UTC(year, 0, 1));
+  const end = new Date(Date.UTC(year, 11, 31));
+  return {
+    from: formatUtcDate(start),
+    to: formatUtcDate(end),
+    label: String(year),
+  };
+}
+
 function getPreviousMonthRange(month: number, year: number) {
   const start = new Date(Date.UTC(year, month, 1));
   start.setUTCMonth(start.getUTCMonth() - 1);
   return getMonthRange(start.getUTCMonth(), start.getUTCFullYear());
+}
+
+function getPreviousYearRange(year: number) {
+  return getYearRange(year - 1);
 }
 
 function inDateRange(dateStr: string, from: string, to: string): boolean {
@@ -366,23 +380,24 @@ export default function Dashboard() {
     restocks: [],
     saleDocuments: [],
   });
-  const [selectedMonth, setSelectedMonth] = useState(() => String(now.getMonth()));
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [selectedYear, setSelectedYear] = useState(() => String(now.getFullYear()));
   const [chartType, setChartType] = useState<'bar' | 'line'>('line');
   const [tourOpen, setTourOpen] = useState(false);
   const [ads, setAds] = useState<DashboardAd[]>([]);
+  const monthFilterActive = selectedMonth !== null;
 
   const selectedRange = useMemo(
-    () => getMonthRange(Number(selectedMonth), Number(selectedYear)),
-    [selectedMonth, selectedYear],
+    () => (monthFilterActive ? getMonthRange(Number(selectedMonth), Number(selectedYear)) : getYearRange(Number(selectedYear))),
+    [monthFilterActive, selectedMonth, selectedYear],
   );
   const previousRange = useMemo(
-    () => getPreviousMonthRange(Number(selectedMonth), Number(selectedYear)),
-    [selectedMonth, selectedYear],
+    () => (monthFilterActive ? getPreviousMonthRange(Number(selectedMonth), Number(selectedYear)) : getPreviousYearRange(Number(selectedYear))),
+    [monthFilterActive, selectedMonth, selectedYear],
   );
   const currentMonth = now.getMonth();
   const currentYear = now.getFullYear();
-  const isCurrentMonth = Number(selectedMonth) === currentMonth && Number(selectedYear) === currentYear;
+  const isCurrentYearView = Number(selectedYear) === currentYear && !monthFilterActive;
 
   const fetchData = useCallback(async () => {
     const [
@@ -548,6 +563,15 @@ export default function Dashboard() {
   );
 
   const chartData = useMemo(() => {
+    if (!monthFilterActive) {
+      return MONTH_NAMES.map((month, index) => {
+        const sales = filtered.sales
+          .filter((sale) => new Date(sale.sale_date).getMonth() === index)
+          .reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
+        return { name: month.slice(0, 3), sales };
+      });
+    }
+
     const start = new Date(`${selectedRange.from}T00:00:00`);
     const end = new Date(`${selectedRange.to}T00:00:00`);
     const dayCount = Math.max(1, Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1);
@@ -562,7 +586,7 @@ export default function Dashboard() {
         .reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
       return { name: label, sales };
     });
-  }, [filtered.sales, selectedRange.from, selectedRange.to]);
+  }, [filtered.sales, monthFilterActive, selectedRange.from, selectedRange.to]);
 
   const recentTransactions = useMemo(
     () =>
@@ -575,10 +599,10 @@ export default function Dashboard() {
       }),
     [filtered.expenses, filtered.funding, filtered.investments, filtered.sales, filtered.savings],
   );
-  const todaySales = getDailySalesValue(raw.sales, now);
-  const previousDay = new Date(now);
-  previousDay.setDate(previousDay.getDate() - 1);
-  const yesterdaySales = getDailySalesValue(raw.sales, previousDay);
+  const periodLength = Math.max(1, Math.floor((new Date(`${selectedRange.to}T00:00:00`).getTime() - new Date(`${selectedRange.from}T00:00:00`).getTime()) / DAY_MS) + 1);
+  const previousPeriodLength = Math.max(1, Math.floor((new Date(`${previousRange.to}T00:00:00`).getTime() - new Date(`${previousRange.from}T00:00:00`).getTime()) / DAY_MS) + 1);
+  const dailySalesValue = activeMetrics.totalRevenue / periodLength;
+  const previousDailySalesValue = previousMetrics.totalRevenue / previousPeriodLength;
 
   const greeting = getGreeting(now.getHours());
   const firstName = getDisplayFirstName(displayName, business?.name || 'there');
@@ -603,18 +627,6 @@ export default function Dashboard() {
 
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card/75 px-3 py-2 shadow-sm">
             <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-              <SelectTrigger className="h-9 w-[146px] border-0 bg-transparent px-2 shadow-none">
-                <SelectValue placeholder="Month" />
-              </SelectTrigger>
-              <SelectContent>
-                {MONTH_NAMES.map((month, index) => (
-                  <SelectItem key={month} value={String(index)}>
-                    {month}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Select value={selectedYear} onValueChange={setSelectedYear}>
               <SelectTrigger className="h-9 w-[98px] border-0 bg-transparent px-2 shadow-none">
                 <SelectValue placeholder="Year" />
@@ -627,9 +639,32 @@ export default function Dashboard() {
                 ))}
               </SelectContent>
             </Select>
-            {!isCurrentMonth ? (
-              <Button variant="ghost" size="sm" onClick={() => { setSelectedMonth(String(currentMonth)); setSelectedYear(String(currentYear)); }}>
-                This month
+            {monthFilterActive ? (
+              <>
+                <Select value={selectedMonth ?? String(currentMonth)} onValueChange={setSelectedMonth}>
+                  <SelectTrigger className="h-9 w-[146px] border-0 bg-transparent px-2 shadow-none">
+                    <SelectValue placeholder="Month" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MONTH_NAMES.map((month, index) => (
+                      <SelectItem key={month} value={String(index)}>
+                        {month}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="ghost" size="sm" onClick={() => setSelectedMonth(null)}>
+                  Year only
+                </Button>
+              </>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => setSelectedMonth(String(currentMonth))}>
+                Add month
+              </Button>
+            )}
+            {!isCurrentYearView ? (
+              <Button variant="ghost" size="sm" onClick={() => { setSelectedMonth(null); setSelectedYear(String(currentYear)); }}>
+                This year
               </Button>
             ) : null}
             <Button variant="outline" size="sm" onClick={() => setTourOpen(true)}>
@@ -650,10 +685,16 @@ export default function Dashboard() {
           />
           <KpiMetricCard
             title="Daily Sales"
-            value={todaySales}
+            value={dailySalesValue}
             footer={
               <MetricDeltaLine
-                delta={getMetricDelta(todaySales, yesterdaySales, 'up', 'vs yesterday', 'First sale today')}
+                delta={getMetricDelta(
+                  dailySalesValue,
+                  previousDailySalesValue,
+                  'up',
+                  monthFilterActive ? 'vs last month' : 'vs last year',
+                  'New in this period',
+                )}
               />
             }
             icon={ShoppingCart}
