@@ -332,12 +332,30 @@ export default function BillingPage() {
     });
     setMomoBusy(false);
 
-    if (error || (data as any)?.error) {
+    const response = (data as any) ?? null;
+    const failureMessage = response?.message
+      || response?.details?.message
+      || response?.error
+      || error?.message
+      || 'We could not trigger the mobile money prompt.';
+
+    if (error) {
       toast({
         title: 'MoMo prompt failed',
-        description: (data as any)?.error || error?.message || 'We could not trigger the mobile money prompt.',
+        description: failureMessage,
         variant: 'destructive',
       });
+      await loadPayments();
+      return;
+    }
+
+    if (response?.success === false || response?.error) {
+      toast({
+        title: response?.payment_status === 'review' ? 'Payment needs review' : 'MoMo prompt failed',
+        description: failureMessage,
+        variant: response?.payment_status === 'review' ? 'default' : 'destructive',
+      });
+      await loadPayments();
       return;
     }
 

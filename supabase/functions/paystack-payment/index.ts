@@ -263,7 +263,17 @@ Deno.serve(async (req) => {
             eventSource: "paystack_momo",
             network,
           });
-          return json({ error: "payment_flagged_for_review", details: chargeData }, 409);
+          return json({
+            success: false,
+            error: "payment_flagged_for_review",
+            message,
+            payment_id: payment.id,
+            reference,
+            payment_status: "review",
+            gateway_status: rawCode || "charge_failed",
+            review_reason: reviewReason,
+            details: chargeData,
+          });
         }
 
         await markTerminalPaymentState(admin, payment, {
@@ -277,7 +287,16 @@ Deno.serve(async (req) => {
           eventSource: "paystack_momo",
           network,
         });
-        return json({ error: "mobile_money_charge_failed", details: chargeData }, 400);
+        return json({
+          success: false,
+          error: "mobile_money_charge_failed",
+          message,
+          payment_id: payment.id,
+          reference,
+          payment_status: "failed",
+          gateway_status: rawCode || "charge_failed",
+          details: chargeData,
+        });
       }
 
       await admin.from("payments").update({
