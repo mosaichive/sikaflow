@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { clearPendingReferralToken, getOrCreateReferralDeviceId, getPendingReferralToken } from '@/lib/referrals';
 
 type AppRole = 'admin' | 'manager' | 'staff' | 'super_admin';
 
@@ -177,6 +178,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [authLoading, fetchProfile, fetchRole, user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const syncReferral = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('claim-referral', {
+          body: {
+            device_id: getOrCreateReferralDeviceId(),
+            referral_token: getPendingReferralToken() || undefined,
+          },
+        });
+        if (error) return;
+        if ((data as any)?.has_referral || (data as any)?.claimed) {
+          clearPendingReferralToken();
+        }
+      } catch (syncError) {
+        console.warn('Referral sync failed', syncError);
+      }
+    };
+
+    void syncReferral();
+  }, [user?.id]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();

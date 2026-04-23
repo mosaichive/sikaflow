@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { getOrCreateReferralDeviceId, getPendingReferralToken } from '@/lib/referrals';
 
 type RoleKey = 'owner' | 'manager' | 'admin';
 type StepKey = 'business' | 'owner' | 'review';
@@ -164,6 +165,13 @@ export function BusinessOnboardingDialog({ open, onCompleted }: BusinessOnboardi
           phone_verified: true,
         }).eq('user_id', user.id),
       ]);
+
+      await supabase.functions.invoke('claim-referral', {
+        body: {
+          device_id: getOrCreateReferralDeviceId(),
+          referral_token: getPendingReferralToken() || undefined,
+        },
+      });
 
       await Promise.all([refreshProfile(), refreshBusiness(), refreshSubscription()]);
       toast({ title: 'Workspace created', description: 'Your dashboard is ready and your 30-day trial has started.' });

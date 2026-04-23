@@ -27,9 +27,9 @@ const PLANS: { key: PlanKey; name: string; price: string; sub: string; perks: st
     key: 'annual',
     name: 'Annual',
     price: 'GH₵500',
-    sub: 'per year · save GH₵100',
-    perks: ['All features unlocked', '2 months free vs monthly', 'Best value'],
-    badge: 'Save GH₵100',
+    sub: 'per year',
+    perks: ['Full access', '1 month free', 'Additional free month on referrals', 'Best value'],
+    badge: 'Best value',
   },
 ];
 

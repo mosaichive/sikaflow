@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { getOrCreateReferralDeviceId, getPendingReferralToken, setPendingReferralToken } from '@/lib/referrals';
 
 type AuthMode = 'sign-in' | 'sign-up';
 
@@ -62,6 +63,10 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+  const referralToken = useMemo(
+    () => new URLSearchParams(location.search).get('ref')?.trim() || getPendingReferralToken(),
+    [location.search],
+  );
 
   const redirectTo = useMemo(() => {
     if (typeof window === 'undefined') return '/dashboard';
@@ -78,8 +83,13 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode);
     setError('');
-    navigate(nextMode === 'sign-in' ? '/sign-in' : '/sign-up', { replace: true, state: location.state });
+    navigate(`${nextMode === 'sign-in' ? '/sign-in' : '/sign-up'}${location.search}`, { replace: true, state: location.state });
   };
+
+  useEffect(() => {
+    const queryToken = new URLSearchParams(location.search).get('ref')?.trim();
+    if (queryToken) setPendingReferralToken(queryToken);
+  }, [location.search]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -108,6 +118,8 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
           data: {
             display_name: fullName.trim(),
             full_name: fullName.trim(),
+            referral_token: referralToken || undefined,
+            signup_device_id: getOrCreateReferralDeviceId(),
           },
           emailRedirectTo: redirectTo,
         },
@@ -148,6 +160,11 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
             ? 'Use your existing business account to continue.'
             : 'Your account opens the dashboard first, then a quick setup dialog.'}
         </p>
+        {referralToken && (
+          <p className="mt-2 text-xs text-primary">
+            Referral applied. Create your account to link this signup to the annual referral program.
+          </p>
+        )}
       </div>
 
       <div className="mb-5 grid grid-cols-2 rounded-lg border border-border bg-muted p-1">

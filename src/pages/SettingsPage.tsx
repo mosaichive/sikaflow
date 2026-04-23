@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Plus, Pencil, Trash2, Landmark, RotateCcw, AlertTriangle, Shield, Users, Key, Camera, X } from 'lucide-react';
 import { ImageCropper } from '@/components/ImageCropper';
+import { ReferralProgramCard } from '@/components/settings/ReferralProgramCard';
 import { useToast } from '@/hooks/use-toast';
 
 interface BankAccount {
@@ -507,6 +508,8 @@ export default function SettingsPage() {
             <div className="flex justify-between"><span className="text-muted-foreground">Role</span><Badge variant={roleBadgeVariant(role || '')} className="capitalize">{role || 'No role'}</Badge></div>
           </CardContent>
         </Card>
+
+        <ReferralProgramCard />
 
         {/* Account Settings */}
         <Card>

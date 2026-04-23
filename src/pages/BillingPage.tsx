@@ -439,10 +439,10 @@ export default function BillingPage() {
               />
               <PlanCard
                 title="Annual"
-                badge="Save GH₵100"
+                badge="Best value"
                 price="GH₵500"
                 sub="per year"
-                perks={['Full access', '2 months free', 'Best value']}
+                perks={['Full access', '1 month free', 'Additional free month on referrals', 'Best value']}
                 selected={selectedPlan === 'annual'}
                 onSelect={() => setSelectedPlan('annual')}
                 current={subscription?.plan === 'annual' && subscription?.status === 'active'}
@@ -457,6 +457,11 @@ export default function BillingPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
+                {selectedPlan === 'annual' && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-xs text-muted-foreground">
+                    <span className="font-semibold text-foreground">Annual benefits:</span> Full access, 1 month free, and up to 3 additional free months through successful referrals.
+                  </div>
+                )}
                 <Section
                   icon={Smartphone}
                   title="Ghana Mobile Money"

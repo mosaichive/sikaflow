@@ -27,6 +27,7 @@ import PaymentsPage from "./pages/platform/PaymentsPage";
 import PaymentMethodsPage from "./pages/platform/PaymentMethodsPage";
 import AnnouncementsPage from "./pages/platform/AnnouncementsPage";
 import AdsPage from "./pages/platform/AdsPage";
+import ReferralsPage from "./pages/platform/ReferralsPage";
 import PlatformSupportPage from "./pages/platform/PlatformSupportPage";
 import NotFound from "./pages/NotFound";
 import { BrandLoader } from "./components/BrandLoader";
@@ -108,6 +109,7 @@ const App = () => (
                   <Route path="subscriptions" element={<SubscriptionsPage />} />
                   <Route path="payments" element={<PaymentsPage />} />
                   <Route path="payment-methods" element={<PaymentMethodsPage />} />
+                  <Route path="referrals" element={<ReferralsPage />} />
                   <Route path="ads" element={<AdsPage />} />
                   <Route path="support" element={<PlatformSupportPage />} />
                   <Route path="announcements" element={<AnnouncementsPage />} />

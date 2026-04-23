@@ -13,6 +13,8 @@ export type SupportedPlan = keyof typeof PLAN_CONFIG;
 export type SupportedMomoNetwork = keyof typeof MOMO_NETWORKS;
 
 const EXACT_AMOUNT_EPSILON = 0.001;
+const REFERRAL_SLOT_LIMIT = 3;
+const REFERRAL_REWARD_DAYS = 30;
 
 export function planAmount(plan: SupportedPlan): number {
   return PLAN_CONFIG[plan].amountGhs;
@@ -79,6 +81,339 @@ export function mapGatewayStatusToPaymentStatus(status: string | null | undefine
 
 export function isTerminalPaymentStatus(status: string | null | undefined): boolean {
   return ["confirmed", "failed", "cancelled", "timeout", "review", "rejected", "refunded"].includes((status ?? "").toLowerCase());
+}
+
+function normalizePhoneForReferral(value?: string | null) {
+  return normalizeGhanaPhone(value ?? "").replace(/\D/g, "");
+}
+
+function referralStatusFromReason(reason: string) {
+  if (["duplicate_device", "duplicate_ip", "manual_flag"].includes(reason)) return "flagged";
+  return "invalid";
+}
+
+async function getBusinessOwner(admin: any, businessId: string) {
+  const { data } = await admin
+    .from("businesses")
+    .select("id, owner_user_id, phone, email, name")
+    .eq("id", businessId)
+    .maybeSingle();
+  return data ?? null;
+}
+
+export async function syncAnnualReferralCycle(
+  admin: any,
+  {
+    businessId,
+    ownerUserId,
+    startAt,
+    endAt,
+    forceReset = false,
+    keepCurrentCount = false,
+  }: {
+    businessId: string;
+    ownerUserId?: string | null;
+    startAt: string;
+    endAt: string | null;
+    forceReset?: boolean;
+    keepCurrentCount?: boolean;
+  },
+) {
+  if (!endAt) return null;
+
+  let resolvedOwnerUserId = ownerUserId ?? null;
+  if (!resolvedOwnerUserId) {
+    const owner = await getBusinessOwner(admin, businessId);
+    resolvedOwnerUserId = owner?.owner_user_id ?? null;
+  }
+  if (!resolvedOwnerUserId) return null;
+
+  const { data: existing } = await admin
+    .from("referral_accounts")
+    .select("*")
+    .eq("business_id", businessId)
+    .maybeSingle();
+
+  const now = new Date();
+  const existingCycleEnd = existing?.current_cycle_ends_at ? new Date(existing.current_cycle_ends_at) : null;
+  const shouldReset = forceReset || !existingCycleEnd || existingCycleEnd <= now;
+
+  if (!existing) {
+    const insertPayload = {
+      business_id: businessId,
+      owner_user_id: resolvedOwnerUserId,
+      current_cycle_started_at: startAt,
+      current_cycle_ends_at: endAt,
+      current_cycle_rewarded_count: 0,
+    };
+    const { data: inserted } = await admin
+      .from("referral_accounts")
+      .upsert(insertPayload, { onConflict: "business_id" })
+      .select("*")
+      .single();
+    return inserted ?? insertPayload;
+  }
+
+  const updatePayload: Record<string, unknown> = {
+    owner_user_id: resolvedOwnerUserId,
+  };
+
+  if (shouldReset) {
+    updatePayload.current_cycle_started_at = startAt;
+    updatePayload.current_cycle_ends_at = endAt;
+    if (!keepCurrentCount) updatePayload.current_cycle_rewarded_count = 0;
+  } else if (keepCurrentCount) {
+    updatePayload.current_cycle_ends_at = endAt;
+  }
+
+  if (Object.keys(updatePayload).length === 1 && updatePayload.owner_user_id === existing.owner_user_id) {
+    return existing;
+  }
+
+  const { data: updated } = await admin
+    .from("referral_accounts")
+    .update(updatePayload)
+    .eq("id", existing.id)
+    .select("*")
+    .single();
+
+  return updated ?? { ...existing, ...updatePayload };
+}
+
+async function findReferralForConvertedBusiness(admin: any, businessId: string) {
+  const direct = await admin
+    .from("referrals")
+    .select("*")
+    .eq("referred_business_id", businessId)
+    .maybeSingle();
+  if (direct.data) return direct.data;
+
+  const business = await getBusinessOwner(admin, businessId);
+  if (!business?.owner_user_id) return null;
+
+  const fallback = await admin
+    .from("referrals")
+    .select("*")
+    .eq("referred_user_id", business.owner_user_id)
+    .maybeSingle();
+
+  if (fallback.data && !fallback.data.referred_business_id) {
+    await admin
+      .from("referrals")
+      .update({ referred_business_id: businessId })
+      .eq("id", fallback.data.id);
+    return { ...fallback.data, referred_business_id: businessId };
+  }
+
+  return fallback.data ?? null;
+}
+
+export async function maybeApplyReferralReward(
+  admin: any,
+  payment: any,
+  {
+    resolvedPlan,
+    activatedAt,
+    eventSource,
+  }: {
+    resolvedPlan: SupportedPlan;
+    activatedAt: string;
+    eventSource: string;
+  },
+) {
+  const referral = await findReferralForConvertedBusiness(admin, payment.business_id);
+  if (!referral) return { applied: false, status: "none" as const };
+
+  if (referral.reward_applied_at || referral.reward_months >= 1 || referral.status === "rewarded") {
+    return { applied: false, status: "rewarded" as const, referralId: referral.id };
+  }
+
+  if (["flagged", "invalid"].includes(referral.status)) {
+    return { applied: false, status: referral.status as "flagged" | "invalid", referralId: referral.id };
+  }
+
+  const [
+    { data: account },
+    { data: referrerSub },
+    referrerOwnerRes,
+    referredOwnerRes,
+    { data: referrerProfile },
+    { data: referredProfile },
+    referrerBusiness,
+    referredBusiness,
+  ] = await Promise.all([
+    admin.from("referral_accounts").select("*").eq("id", referral.referral_account_id).maybeSingle(),
+    admin.from("subscriptions").select("*").eq("business_id", referral.referrer_business_id).maybeSingle(),
+    admin.auth.admin.getUserById(referral.referrer_user_id),
+    admin.auth.admin.getUserById(referral.referred_user_id),
+    admin.from("profiles").select("phone").eq("user_id", referral.referrer_user_id).maybeSingle(),
+    admin.from("profiles").select("phone").eq("user_id", referral.referred_user_id).maybeSingle(),
+    getBusinessOwner(admin, referral.referrer_business_id),
+    getBusinessOwner(admin, payment.business_id),
+  ]);
+
+  if (!account?.id) {
+    return { applied: false, status: "missing_account" as const, referralId: referral.id };
+  }
+
+  let validationReason = referral.validation_reason || "";
+  const referrerEmail = referrerOwnerRes.data.user?.email?.trim().toLowerCase() ?? "";
+  const referredEmail = referredOwnerRes.data.user?.email?.trim().toLowerCase() ?? "";
+  const referrerPhone = normalizePhoneForReferral(referrerProfile?.phone ?? referrerBusiness?.phone);
+  const referredPhone = normalizePhoneForReferral(referredProfile?.phone ?? referredBusiness?.phone);
+
+  if (!validationReason && referral.referrer_user_id === referral.referred_user_id) {
+    validationReason = "self_referral";
+  } else if (!validationReason && referrerEmail && referredEmail && referrerEmail === referredEmail) {
+    validationReason = "duplicate_email";
+  } else if (!validationReason && referrerPhone && referredPhone && referrerPhone === referredPhone) {
+    validationReason = "duplicate_phone";
+  } else if (
+    !validationReason &&
+    (
+      referrerSub?.plan !== "annual"
+      || referrerSub?.status !== "active"
+      || !referrerSub.current_period_end
+      || new Date(referrerSub.current_period_end) <= new Date(activatedAt)
+    )
+  ) {
+    validationReason = "referrer_ineligible";
+  } else if (!validationReason && Number(account.current_cycle_rewarded_count ?? 0) >= REFERRAL_SLOT_LIMIT) {
+    validationReason = "limit_reached";
+  }
+
+  if (!validationReason && referral.referred_device_id) {
+    const { data: duplicateDevice } = await admin
+      .from("referrals")
+      .select("id")
+      .eq("referrer_user_id", referral.referrer_user_id)
+      .eq("referred_device_id", referral.referred_device_id)
+      .neq("id", referral.id)
+      .neq("status", "invalid")
+      .limit(1)
+      .maybeSingle();
+    if (duplicateDevice?.id) validationReason = "duplicate_device";
+  }
+
+  if (!validationReason && referral.referred_signup_ip) {
+    const { data: duplicateIp } = await admin
+      .from("referrals")
+      .select("id")
+      .eq("referrer_user_id", referral.referrer_user_id)
+      .eq("referred_signup_ip", referral.referred_signup_ip)
+      .neq("id", referral.id)
+      .neq("status", "invalid")
+      .limit(1)
+      .maybeSingle();
+    if (duplicateIp?.id) validationReason = "duplicate_ip";
+  }
+
+  if (validationReason) {
+    const nextStatus = referralStatusFromReason(validationReason);
+    await admin
+      .from("referrals")
+      .update({
+        status: nextStatus,
+        validation_reason: validationReason,
+        qualified_payment_id: payment.id,
+        subscribed_plan: resolvedPlan,
+        converted_at: activatedAt,
+      })
+      .eq("id", referral.id);
+
+    await recordPaymentEvent(admin, {
+      paymentId: payment.id,
+      businessId: payment.business_id,
+      eventSource,
+      eventType: "referral_blocked",
+      status: nextStatus,
+      message: validationReason.replaceAll("_", " "),
+      payload: {
+        referral_id: referral.id,
+        referrer_business_id: referral.referrer_business_id,
+        validation_reason: validationReason,
+      },
+    });
+
+    return { applied: false, status: nextStatus as "flagged" | "invalid", referralId: referral.id, blockedReason: validationReason };
+  }
+
+  const rewardBase = referrerSub?.current_period_end && new Date(referrerSub.current_period_end) > new Date(activatedAt)
+    ? new Date(referrerSub.current_period_end)
+    : new Date(activatedAt);
+  const rewardEnd = new Date(rewardBase.getTime() + REFERRAL_REWARD_DAYS * 86400000).toISOString();
+  const nextCount = Math.min(Number(account.current_cycle_rewarded_count ?? 0) + 1, REFERRAL_SLOT_LIMIT);
+
+  await admin
+    .from("subscriptions")
+    .update({
+      current_period_end: rewardEnd,
+      next_renewal_date: rewardEnd,
+    })
+    .eq("business_id", referral.referrer_business_id);
+
+  await admin
+    .from("referral_accounts")
+    .update({
+      current_cycle_rewarded_count: nextCount,
+      lifetime_rewarded_count: Number(account.lifetime_rewarded_count ?? 0) + 1,
+      last_reward_applied_at: activatedAt,
+      current_cycle_ends_at: rewardEnd,
+    })
+    .eq("id", account.id);
+
+  await admin
+    .from("referrals")
+    .update({
+      status: "rewarded",
+      validation_reason: "",
+      qualified_payment_id: payment.id,
+      subscribed_plan: resolvedPlan,
+      converted_at: activatedAt,
+      reward_applied_at: activatedAt,
+      reward_months: 1,
+      cycle_ends_at: rewardEnd,
+    })
+    .eq("id", referral.id);
+
+  await recordPaymentEvent(admin, {
+    paymentId: payment.id,
+    businessId: payment.business_id,
+    eventSource,
+    eventType: "referral_reward_applied",
+    status: "rewarded",
+    message: "Annual referrer rewarded with one free month",
+    payload: {
+      referral_id: referral.id,
+      referrer_business_id: referral.referrer_business_id,
+      reward_expires_at: rewardEnd,
+      reward_months: 1,
+      rewarded_count: nextCount,
+    },
+  });
+
+  await admin.from("platform_audit_log").insert({
+    action: "referral_reward_applied",
+    target_business_id: referral.referrer_business_id,
+    details: {
+      referral_id: referral.id,
+      referred_business_id: payment.business_id,
+      qualified_payment_id: payment.id,
+      subscribed_plan: resolvedPlan,
+      reward_expires_at: rewardEnd,
+      rewarded_count: nextCount,
+    },
+    performed_by: payment.submitted_by ?? referral.referrer_user_id,
+    performed_by_email: referredEmail || payment.payer_name || null,
+  });
+
+  return {
+    applied: true,
+    status: "rewarded" as const,
+    referralId: referral.id,
+    rewardExpiresAt: rewardEnd,
+    rewardedCount: nextCount,
+  };
 }
 
 export async function recordPaymentEvent(
@@ -420,6 +755,21 @@ export async function activateSubscriptionForPayment(
     trial_end_date: null,
   }).eq("business_id", payment.business_id);
 
+  if (resolvedPlan === "annual") {
+    const forceCycleReset = !(
+      sub?.plan === "annual"
+      && sub?.status === "active"
+      && sub?.current_period_end
+      && new Date(sub.current_period_end) > now
+    );
+    await syncAnnualReferralCycle(admin, {
+      businessId: payment.business_id,
+      startAt: activationTime,
+      endAt: nextEnd.toISOString(),
+      forceReset: forceCycleReset,
+    });
+  }
+
   await admin.from("payments").update({
     status: "confirmed",
     requested_plan: payment.requested_plan ?? payment.plan,
@@ -481,5 +831,17 @@ export async function activateSubscriptionForPayment(
     reference,
   });
 
-  return { status: "confirmed", duplicate: false, expiresAt: nextEnd.toISOString(), resolvedPlan };
+  const referralReward = await maybeApplyReferralReward(admin, payment, {
+    resolvedPlan,
+    activatedAt: activationTime,
+    eventSource,
+  });
+
+  return {
+    status: "confirmed",
+    duplicate: false,
+    expiresAt: nextEnd.toISOString(),
+    resolvedPlan,
+    referralReward,
+  };
 }

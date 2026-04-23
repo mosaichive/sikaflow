@@ -5,7 +5,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
 import {
   PLAN_CONFIG,
   activateSubscriptionForPayment,
+  maybeApplyReferralReward,
   recordPaymentEvent,
+  syncAnnualReferralCycle,
   type SupportedPlan,
 } from "../_shared/payment-utils.ts";
 
@@ -122,6 +124,14 @@ Deno.serve(async (req) => {
           trial_start_date: body.plan === "free_trial" ? start.toISOString() : null,
           trial_end_date: body.plan === "free_trial" ? end?.toISOString() ?? null : null,
         }).eq("business_id", body.business_id);
+        if (body.plan === "annual" && end) {
+          await syncAnnualReferralCycle(admin, {
+            businessId: body.business_id,
+            startAt: start.toISOString(),
+            endAt: end.toISOString(),
+            forceReset: true,
+          });
+        }
         await log("set_plan", { plan: body.plan, period_days: days });
         return json({ success: true });
       }
@@ -203,6 +213,21 @@ Deno.serve(async (req) => {
             trial_end_date: null,
           }).eq("business_id", pay.business_id);
 
+          if (planToActivate === "annual") {
+            const forceCycleReset = !(
+              sub?.plan === "annual"
+              && sub?.status === "active"
+              && sub?.current_period_end
+              && new Date(sub.current_period_end) > now
+            );
+            await syncAnnualReferralCycle(admin, {
+              businessId: pay.business_id,
+              startAt: confirmedAt,
+              endAt: end,
+              forceReset: forceCycleReset,
+            });
+          }
+
           await recordPaymentEvent(admin, {
             paymentId: body.payment_id,
             businessId: pay.business_id,
@@ -216,6 +241,12 @@ Deno.serve(async (req) => {
               activated_plan: planToActivate,
               expires_at: end,
             },
+          });
+
+          await maybeApplyReferralReward(admin, pay, {
+            resolvedPlan: planToActivate,
+            activatedAt: confirmedAt,
+            eventSource: "super_admin",
           });
           result = { status: "confirmed", expiresAt: end };
         } else {

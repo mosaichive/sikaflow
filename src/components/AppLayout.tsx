@@ -9,6 +9,7 @@ import { useBusiness } from '@/context/BusinessContext';
 import { useTheme } from '@/hooks/useTheme';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Logo } from '@/components/Logo';
+import { ReferralNotifications } from '@/components/referrals/ReferralNotifications';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 export function AppLayout({ children, title }: { children: ReactNode; title?: string }) {
@@ -20,6 +21,7 @@ export function AppLayout({ children, title }: { children: ReactNode; title?: st
 
   return (
     <SidebarProvider>
+      <ReferralNotifications />
       <div className="min-h-screen flex w-full bg-background">
         {!isMobile && <AppSidebar />}
         <div className="flex-1 flex flex-col min-w-0">
