@@ -79,6 +79,19 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (!businessId) return;
+    const channel = supabase.channel(`subscription:${businessId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'subscriptions', filter: `business_id=eq.${businessId}` },
+        () => { void load(); },
+      )
+      .subscribe();
+
+    return () => { void supabase.removeChannel(channel); };
+  }, [businessId, load]);
+
   const computeAccess = (): { hasAccess: boolean; daysRemaining: number | null } => {
     if (!subscription) return { hasAccess: false, daysRemaining: null };
     if (subscription.status === 'lifetime') return { hasAccess: true, daysRemaining: null };

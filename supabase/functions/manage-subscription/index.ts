@@ -2,6 +2,12 @@
 // Authenticates the caller and verifies they have the super_admin role
 // before performing any privileged operation.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.50.0";
+import {
+  PLAN_CONFIG,
+  activateSubscriptionForPayment,
+  recordPaymentEvent,
+  type SupportedPlan,
+} from "../_shared/payment-utils.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -32,8 +38,8 @@ interface Body {
 
 const PLAN_PRICES: Record<string, number> = {
   free_trial: 0,
-  monthly: 50,
-  annual: 500,
+  monthly: PLAN_CONFIG.monthly.amountGhs,
+  annual: PLAN_CONFIG.annual.amountGhs,
   lifetime: 0,
 };
 
@@ -159,28 +165,83 @@ Deno.serve(async (req) => {
         if (!body.payment_id) return json({ error: "bad_params" }, 400);
         const { data: pay } = await admin.from("payments").select("*").eq("id", body.payment_id).maybeSingle();
         if (!pay) return json({ error: "payment_not_found" }, 404);
-        await admin.from("payments").update({
-          status: "confirmed",
-          confirmed_by: user.id,
-          confirmed_at: new Date().toISOString(),
-        }).eq("id", body.payment_id);
+        const confirmedAt = new Date().toISOString();
+        const planToActivate = ((pay.resolved_plan ?? pay.requested_plan ?? pay.plan) || "monthly") as SupportedPlan;
+        let result: { status: string; expiresAt: string | null } = { status: "confirmed", expiresAt: null };
 
-        // Advance subscription based on plan paid
-        const days = pay.plan === "annual" ? 365 : 30;
-        const start = new Date();
-        const end = new Date(start.getTime() + days * 86400000);
-        await admin.from("subscriptions").update({
-          plan: pay.plan,
-          status: "active",
-          price_ghs: PLAN_PRICES[pay.plan] ?? 0,
-          current_period_start: start.toISOString(),
-          current_period_end: end.toISOString(),
-          next_renewal_date: end.toISOString(),
-          trial_end_date: null,
-        }).eq("business_id", pay.business_id);
+        if (pay.status === "review") {
+          const { data: sub } = await admin.from("subscriptions").select("*").eq("business_id", pay.business_id).maybeSingle();
+          const now = new Date();
+          const base = sub?.current_period_end && new Date(sub.current_period_end) > now
+            ? new Date(sub.current_period_end)
+            : now;
+          const end = new Date(base.getTime() + PLAN_CONFIG[planToActivate].billingDays * 86400000).toISOString();
 
+          await admin.from("payments").update({
+            status: "confirmed",
+            plan: planToActivate,
+            resolved_plan: planToActivate,
+            requested_plan: pay.requested_plan ?? pay.plan,
+            billing_cycle: PLAN_CONFIG[planToActivate].billingCycle,
+            amount_paid_ghs: pay.amount_paid_ghs ?? pay.amount_ghs,
+            review_reason: null,
+            confirmed_by: user.id,
+            confirmed_at: confirmedAt,
+            activated_at: confirmedAt,
+            expires_at: end,
+            gateway_status: pay.gateway_status ?? "manual_confirmed",
+            gateway_message: body.note ?? pay.gateway_message ?? "Review resolved by super admin",
+          }).eq("id", body.payment_id);
+
+          await admin.from("subscriptions").update({
+            plan: planToActivate,
+            status: "active",
+            price_ghs: PLAN_PRICES[planToActivate] ?? 0,
+            current_period_start: now.toISOString(),
+            current_period_end: end,
+            next_renewal_date: end,
+            trial_end_date: null,
+          }).eq("business_id", pay.business_id);
+
+          await recordPaymentEvent(admin, {
+            paymentId: body.payment_id,
+            businessId: pay.business_id,
+            eventSource: "super_admin",
+            eventType: "review_resolved",
+            status: "confirmed",
+            message: body.note ?? "Payment approved manually after review",
+            payload: {
+              performed_by: user.id,
+              performed_by_email: user.email ?? null,
+              activated_plan: planToActivate,
+              expires_at: end,
+            },
+          });
+          result = { status: "confirmed", expiresAt: end };
+        } else {
+          const activation = await activateSubscriptionForPayment(admin, pay, {
+            amountPaidGhs: Number(pay.amount_paid_ghs ?? pay.amount_ghs ?? 0),
+            gatewayStatus: "manual_confirmed",
+            gatewayMessage: body.note ?? "Payment confirmed by super admin",
+            reference: pay.paystack_reference || pay.reference || pay.id,
+            providerTransactionId: pay.provider_transaction_id ?? null,
+            providerResponse: {
+              source: "manage-subscription",
+              action: "confirm_payment",
+              note: body.note ?? null,
+            },
+            eventSource: "super_admin",
+            network: pay.network ?? null,
+          });
+          if (activation.status === "confirmed") {
+            await admin.from("payments").update({
+              confirmed_by: user.id,
+            }).eq("id", body.payment_id);
+          }
+          result = { status: activation.status, expiresAt: activation.expiresAt ?? null };
+        }
         await log("confirm_payment", { payment_id: body.payment_id, plan: pay.plan });
-        return json({ success: true });
+        return json({ success: true, status: result.status, expires_at: result.expiresAt ?? null });
       }
 
       case "reject_payment": {
@@ -191,6 +252,18 @@ Deno.serve(async (req) => {
           confirmed_at: new Date().toISOString(),
           note: body.note ?? "",
         }).eq("id", body.payment_id);
+        const { data: rejected } = await admin.from("payments").select("business_id").eq("id", body.payment_id).maybeSingle();
+        if (rejected?.business_id) {
+          await recordPaymentEvent(admin, {
+            paymentId: body.payment_id,
+            businessId: rejected.business_id,
+            eventSource: "super_admin",
+            eventType: "payment_rejected",
+            status: "rejected",
+            message: body.note ?? "Payment rejected by super admin",
+            payload: { performed_by: user.id, performed_by_email: user.email ?? null },
+          });
+        }
         await log("reject_payment", { payment_id: body.payment_id, note: body.note ?? null });
         return json({ success: true });
       }
