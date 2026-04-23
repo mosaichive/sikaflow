@@ -61,6 +61,7 @@ type Expense = {
 type Product = {
   quantity: number | null;
   reorder_level: number;
+  selling_price?: number | string | null;
 };
 
 type SaleItem = {
@@ -133,7 +134,7 @@ type Metrics = {
   qtySold: number;
   qtyRestocked: number;
   stockLeft: number;
-  totalInvoices: number;
+  stockLeftValue: number;
 };
 
 type RecentTransaction = {
@@ -208,7 +209,10 @@ function calcMetrics(
   const qtySold = saleItems.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
   const qtyRestocked = restocks.reduce((sum, row) => sum + Number(row.quantity_added ?? 0), 0);
   const stockLeft = products.reduce((sum, product) => sum + Math.max(0, Number(product.quantity ?? 0)), 0);
-  const totalInvoices = saleDocuments.filter((document) => document.kind === 'invoice').length;
+  const stockLeftValue = products.reduce(
+    (sum, product) => sum + Math.max(0, Number(product.quantity ?? 0)) * Number(product.selling_price ?? 0),
+    0,
+  );
 
   return {
     totalRevenue,
@@ -225,7 +229,7 @@ function calcMetrics(
     qtySold,
     qtyRestocked,
     stockLeft,
-    totalInvoices,
+    stockLeftValue,
   };
 }
 
@@ -240,7 +244,13 @@ function getDisplayFirstName(displayName: string, fallback: string) {
   return source.split(/\s+/)[0] || 'there';
 }
 
-function getMetricDelta(current: number, previous: number, improveWhen: 'up' | 'down' = 'up') {
+function getMetricDelta(
+  current: number,
+  previous: number,
+  improveWhen: 'up' | 'down' = 'up',
+  comparisonText = 'from last month',
+  newPeriodText = 'New this period',
+) {
   const difference = current - previous;
   if (Math.abs(difference) < 0.01) {
     return { state: 'neutral' as const, label: 'No change', icon: Minus };
@@ -249,7 +259,7 @@ function getMetricDelta(current: number, previous: number, improveWhen: 'up' | '
     const up = difference > 0;
     return {
       state: improveWhen === 'up' ? (up ? 'positive' : 'negative') : (up ? 'negative' : 'positive'),
-      label: 'New this month',
+      label: newPeriodText,
       icon: up ? ArrowUpRight : ArrowDownRight,
     };
   }
@@ -258,9 +268,16 @@ function getMetricDelta(current: number, previous: number, improveWhen: 'up' | '
   const direction = difference > 0 ? 'up' : 'down';
   return {
     state: improveWhen === direction ? 'positive' as const : 'negative' as const,
-    label: `${percent.toFixed(1)}% from last month`,
+    label: `${percent.toFixed(1)}% ${comparisonText}`,
     icon: direction === 'up' ? ArrowUpRight : ArrowDownRight,
   };
+}
+
+function getDailySalesValue(sales: Sale[], date: Date) {
+  const target = date.toISOString().slice(0, 10);
+  return sales
+    .filter((sale) => sale.sale_date.slice(0, 10) === target)
+    .reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
 }
 
 function buildRecentTransactions({
@@ -558,6 +575,10 @@ export default function Dashboard() {
       }),
     [filtered.expenses, filtered.funding, filtered.investments, filtered.sales, filtered.savings],
   );
+  const todaySales = getDailySalesValue(raw.sales, now);
+  const previousDay = new Date(now);
+  previousDay.setDate(previousDay.getDate() - 1);
+  const yesterdaySales = getDailySalesValue(raw.sales, previousDay);
 
   const greeting = getGreeting(now.getHours());
   const firstName = getDisplayFirstName(displayName, business?.name || 'there');
@@ -620,33 +641,47 @@ export default function Dashboard() {
         <DashboardAdsStrip ads={ads} />
 
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <PrimaryMetricCard
-            title="Total Sales"
-            value={activeMetrics.totalRevenue}
-            delta={getMetricDelta(activeMetrics.totalRevenue, previousMetrics.totalRevenue, 'up')}
+          <KpiMetricCard
+            title="Available Business Money"
+            value={activeMetrics.availableCash}
+            footer={<MetricDeltaLine delta={getMetricDelta(activeMetrics.availableCash, previousMetrics.availableCash, 'up')} />}
+            icon={Wallet}
+            iconTone="bg-blue-500/15 text-blue-400"
+          />
+          <KpiMetricCard
+            title="Daily Sales"
+            value={todaySales}
+            footer={
+              <MetricDeltaLine
+                delta={getMetricDelta(todaySales, yesterdaySales, 'up', 'vs yesterday', 'First sale today')}
+              />
+            }
             icon={ShoppingCart}
             iconTone="bg-violet-500/15 text-violet-400"
           />
-          <PrimaryMetricCard
-            title="Total Expenses"
-            value={activeMetrics.totalExpenses}
-            delta={getMetricDelta(activeMetrics.totalExpenses, previousMetrics.totalExpenses, 'down')}
-            icon={Receipt}
-            iconTone="bg-rose-500/15 text-rose-400"
-          />
-          <PrimaryMetricCard
+          <KpiMetricCard
             title="Total Profit"
             value={activeMetrics.totalProfit}
-            delta={getMetricDelta(activeMetrics.totalProfit, previousMetrics.totalProfit, 'up')}
+            footer={<MetricDeltaLine delta={getMetricDelta(activeMetrics.totalProfit, previousMetrics.totalProfit, 'up')} />}
             icon={TrendingUp}
             iconTone="bg-emerald-500/15 text-emerald-400"
           />
-          <PrimaryMetricCard
-            title="Cash Balance"
-            value={activeMetrics.availableCash}
-            delta={getMetricDelta(activeMetrics.availableCash, previousMetrics.availableCash, 'up')}
-            icon={Wallet}
-            iconTone="bg-blue-500/15 text-blue-400"
+          <KpiMetricCard
+            title="Stock Left"
+            value={`${activeMetrics.stockLeft.toLocaleString('en-GH')} items`}
+            isCurrency={false}
+            footer={
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground/90">{formatCurrency(activeMetrics.stockLeftValue)} stock value</p>
+                <p className="text-xs text-muted-foreground">
+                  {activeMetrics.lowStockCount > 0
+                    ? `${activeMetrics.lowStockCount} low-stock item${activeMetrics.lowStockCount === 1 ? '' : 's'} need attention`
+                    : 'Inventory levels are healthy'}
+                </p>
+              </div>
+            }
+            icon={activeMetrics.lowStockCount > 0 ? AlertTriangle : Package}
+            iconTone={activeMetrics.lowStockCount > 0 ? 'bg-amber-500/15 text-amber-400' : 'bg-fuchsia-500/15 text-fuchsia-400'}
           />
         </section>
 
@@ -736,54 +771,46 @@ export default function Dashboard() {
           </Card>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <SecondaryMetricCard
-            title="Savings"
-            value={activeMetrics.totalSavings}
-            subtitle="Total savings"
-            icon={PiggyBank}
-            iconTone="bg-emerald-500/15 text-emerald-400"
-          />
-          <SecondaryMetricCard
-            title="Investments"
-            value={activeMetrics.totalInvestments}
-            subtitle="Total investments"
-            icon={TrendingUp}
-            iconTone="bg-blue-500/15 text-blue-400"
-          />
-          <SecondaryMetricCard
-            title="Investor Funds"
-            value={activeMetrics.totalFunding}
-            subtitle="Funds received"
-            icon={HandCoins}
-            iconTone="bg-amber-500/15 text-amber-400"
-          />
-          <SecondaryMetricCard
-            title="Stock Left"
-            value={activeMetrics.stockLeft}
-            subtitle={activeMetrics.lowStockCount > 0 ? `${activeMetrics.lowStockCount} low stock item${activeMetrics.lowStockCount === 1 ? '' : 's'}` : `${activeMetrics.totalInvoices} invoices issued`}
-            icon={activeMetrics.lowStockCount > 0 ? AlertTriangle : Package}
-            iconTone={activeMetrics.lowStockCount > 0 ? 'bg-amber-500/15 text-amber-400' : 'bg-violet-500/15 text-violet-400'}
-            isCount
-          />
-        </section>
       </div>
     </AppLayout>
   );
 }
 
-function PrimaryMetricCard({
+function KpiMetricCard({
   title,
   value,
-  delta,
+  footer,
   icon: Icon,
   iconTone,
+  isCurrency = true,
 }: {
   title: string;
-  value: number;
-  delta: { state: 'positive' | 'negative' | 'neutral'; label: string; icon: React.ComponentType<{ className?: string }> };
+  value: number | string;
+  footer: React.ReactNode;
   icon: React.ComponentType<{ className?: string }>;
   iconTone: string;
+  isCurrency?: boolean;
+}) {
+  return (
+    <Card className="rounded-2xl">
+      <CardContent className="flex items-start justify-between gap-4 p-5">
+        <div className="min-w-0">
+          <p className="text-sm text-muted-foreground">{title}</p>
+          <p className="mt-3 text-3xl font-bold tracking-tight">{isCurrency ? formatCurrency(Number(value)) : value}</p>
+          <div className="mt-3">{footer}</div>
+        </div>
+        <span className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded-full', iconTone)}>
+          <Icon className="h-6 w-6" />
+        </span>
+      </CardContent>
+    </Card>
+  );
+}
+
+function MetricDeltaLine({
+  delta,
+}: {
+  delta: { state: 'positive' | 'negative' | 'neutral'; label: string; icon: React.ComponentType<{ className?: string }> };
 }) {
   const DeltaIcon = delta.icon;
   const deltaTone = delta.state === 'positive'
@@ -793,52 +820,10 @@ function PrimaryMetricCard({
       : 'text-muted-foreground';
 
   return (
-    <Card className="rounded-2xl">
-      <CardContent className="flex items-start justify-between gap-4 p-5">
-        <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">{title}</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight">{formatCurrency(value)}</p>
-          <div className={cn('mt-3 flex items-center gap-1.5 text-sm', deltaTone)}>
-            <DeltaIcon className="h-4 w-4" />
-            <span>{delta.label}</span>
-          </div>
-        </div>
-        <span className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded-full', iconTone)}>
-          <Icon className="h-6 w-6" />
-        </span>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SecondaryMetricCard({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  iconTone,
-  isCount = false,
-}: {
-  title: string;
-  value: number;
-  subtitle: string;
-  icon: React.ComponentType<{ className?: string }>;
-  iconTone: string;
-  isCount?: boolean;
-}) {
-  return (
-    <Card className="rounded-2xl">
-      <CardContent className="flex items-start justify-between gap-4 p-5">
-        <div className="min-w-0">
-          <p className="text-sm text-muted-foreground">{title}</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight">{isCount ? value.toLocaleString('en-GH') : formatCurrency(value)}</p>
-          <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>
-        </div>
-        <span className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded-full', iconTone)}>
-          <Icon className="h-6 w-6" />
-        </span>
-      </CardContent>
-    </Card>
+    <div className={cn('flex items-center gap-1.5 text-sm', deltaTone)}>
+      <DeltaIcon className="h-4 w-4" />
+      <span>{delta.label}</span>
+    </div>
   );
 }
 

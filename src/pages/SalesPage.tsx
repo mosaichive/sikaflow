@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, ShoppingCart, Trash2, Eye, Info, Pencil, FileText, ReceiptText, Search } from 'lucide-react';
+import { Plus, ShoppingCart, Trash2, Eye, Info, Pencil, FileText, ReceiptText } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SaleDocumentViewerDialog } from '@/components/sales/SaleDocumentViewerDialog';
@@ -33,9 +33,6 @@ export default function SalesPage() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
-  const [saleDocuments, setSaleDocuments] = useState<SaleDocumentRecord[]>([]);
-  const [documentQuery, setDocumentQuery] = useState('');
-  const [documentKindFilter, setDocumentKindFilter] = useState<'all' | SaleDocumentKind>('all');
   const [documentOpen, setDocumentOpen] = useState(false);
   const [activeDocument, setActiveDocument] = useState<SaleDocumentRecord | null>(null);
   const [documentBusyKey, setDocumentBusyKey] = useState<string | null>(null);
@@ -84,11 +81,9 @@ export default function SalesPage() {
 
   useEffect(() => {
     fetchData();
-    void fetchDocuments();
     const channel = supabase.channel('sales-page')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, fetchSales)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchAllProducts)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sale_documents' }, fetchDocuments)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, []);
@@ -116,11 +111,6 @@ export default function SalesPage() {
 
   const fetchData = async () => {
     await Promise.all([fetchAllProducts(), fetchSales()]);
-  };
-
-  const fetchDocuments = async () => {
-    const { data } = await supabase.from('sale_documents' as any).select('*').order('issued_at', { ascending: false });
-    setSaleDocuments(((data as any[]) ?? []).map(normalizeSaleDocument));
   };
 
   const resetForm = () => {
@@ -359,24 +349,8 @@ export default function SalesPage() {
 
   const detailSale = sales.find(s => s.id === detailSaleId);
   const detailItems = detailSaleId ? saleItems[detailSaleId] || [] : [];
-  const detailDocuments = detailSaleId ? saleDocuments.filter((document) => document.sale_id === detailSaleId) : [];
-
   // For the form, show all products when editing (including 0-stock), only in-stock for new
   const formProducts = editSaleId ? allProducts : products;
-
-  const filteredDocuments = useMemo(() => {
-    const query = documentQuery.trim().toLowerCase();
-    return saleDocuments.filter((document) => {
-      if (documentKindFilter !== 'all' && document.kind !== documentKindFilter) return false;
-      if (!query) return true;
-      return [
-        document.document_number,
-        document.customer_name,
-        document.seller_name || '',
-        saleDocumentLabel(document.kind),
-      ].some((value) => value.toLowerCase().includes(query));
-    });
-  }, [documentKindFilter, documentQuery, saleDocuments]);
 
   const openDocument = (document: SaleDocumentRecord) => {
     setActiveDocument(document);
@@ -433,7 +407,6 @@ export default function SalesPage() {
       const document = normalizeSaleDocument(data);
       setActiveDocument(document);
       setDocumentOpen(true);
-      await fetchDocuments();
       toast({
         title: `${saleDocumentLabel(kind)} ready`,
         description: `${document.document_number} is ready to view, print, or download.`,
@@ -654,55 +627,6 @@ export default function SalesPage() {
                   <p className="text-sm text-muted-foreground text-center py-4">Loading items...</p>
                 )}
 
-                <div className="rounded-xl border border-border p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-sm font-semibold">Invoices & Receipts</p>
-                      <p className="text-xs text-muted-foreground">Generate, reopen, print, or download sale documents.</p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={documentBusyKey === `${detailSale.id}:invoice`}
-                        onClick={() => void generateDocument(detailSale, 'invoice')}
-                      >
-                        <FileText className="mr-1.5 h-3.5 w-3.5" />
-                        {documentBusyKey === `${detailSale.id}:invoice` ? 'Generating...' : 'Generate invoice'}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={detailSale.payment_status !== 'paid' || documentBusyKey === `${detailSale.id}:receipt`}
-                        onClick={() => void generateDocument(detailSale, 'receipt')}
-                      >
-                        <ReceiptText className="mr-1.5 h-3.5 w-3.5" />
-                        {documentBusyKey === `${detailSale.id}:receipt` ? 'Generating...' : 'Generate receipt'}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {detailDocuments.length > 0 ? (
-                    <div className="mt-4 space-y-2">
-                      {detailDocuments.map((document) => (
-                        <div key={document.id} className="flex flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-sm font-medium">{saleDocumentLabel(document.kind)} • {document.document_number}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(document.issued_at).toLocaleString()} • {document.customer_name}
-                            </p>
-                          </div>
-                          <Button type="button" size="sm" variant="ghost" onClick={() => openDocument(document)}>
-                            <Eye className="mr-1.5 h-3.5 w-3.5" /> View
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-4 text-sm text-muted-foreground">No documents generated for this sale yet.</p>
-                  )}
-                </div>
               </div>
             )}
           </DialogContent>
@@ -861,86 +785,6 @@ export default function SalesPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <CardTitle className="text-base">Invoices & Receipts</CardTitle>
-              <p className="text-xs text-muted-foreground">Search previously issued sale documents and reopen them anytime.</p>
-            </div>
-            <div className="flex flex-wrap items-end gap-2">
-              <div className="grid gap-1">
-                <Label htmlFor="document-search" className="text-[10px] uppercase tracking-wider text-muted-foreground">Search</Label>
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="document-search"
-                    value={documentQuery}
-                    onChange={(event) => setDocumentQuery(event.target.value)}
-                    placeholder="Invoice number or customer"
-                    className="w-56 pl-9"
-                  />
-                </div>
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="document-kind" className="text-[10px] uppercase tracking-wider text-muted-foreground">Type</Label>
-                <Select value={documentKindFilter} onValueChange={(value) => setDocumentKindFilter(value as 'all' | SaleDocumentKind)}>
-                  <SelectTrigger id="document-kind" className="w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All documents</SelectItem>
-                    <SelectItem value="invoice">Invoices</SelectItem>
-                    <SelectItem value="receipt">Receipts</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {filteredDocuments.length > 0 ? (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Number</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Sale Date</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Total</TableHead>
-                      <TableHead>Issued</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredDocuments.map((document) => (
-                      <TableRow key={document.id}>
-                        <TableCell className="font-medium">{document.document_number}</TableCell>
-                        <TableCell>{saleDocumentLabel(document.kind)}</TableCell>
-                        <TableCell>{document.customer_name}</TableCell>
-                        <TableCell className="text-xs">{new Date(document.sale_date).toLocaleDateString()}</TableCell>
-                        <TableCell><StatusBadge status={document.payment_status} /></TableCell>
-                        <TableCell className="font-semibold">{formatCurrency(document.amount_ghs)}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{new Date(document.issued_at).toLocaleString()}</TableCell>
-                        <TableCell className="text-right">
-                          <Button type="button" size="sm" variant="ghost" onClick={() => openDocument(document)}>
-                            <Eye className="mr-1.5 h-3.5 w-3.5" /> View
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ) : (
-              <EmptyState
-                icon={<FileText className="h-7 w-7 text-muted-foreground" />}
-                title={saleDocuments.length > 0 ? 'No documents match this search' : 'No invoices or receipts yet'}
-                description={saleDocuments.length > 0 ? 'Adjust the search or type filter.' : 'Generate an invoice or receipt from any sale to store it here.'}
-              />
-            )}
-          </CardContent>
-        </Card>
       </div>
 
       <SaleDocumentViewerDialog open={documentOpen} onOpenChange={setDocumentOpen} document={activeDocument} />

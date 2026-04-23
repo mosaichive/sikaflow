@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import sikaflowLogo from '@/assets/sikaflow-logo.png';
 import { formatCurrency } from '@/lib/constants';
 
 export type ReportRangePreset = 'today' | 'week' | 'month' | 'year' | 'custom';
@@ -14,6 +15,16 @@ export type ReportStatementRow = {
   runningBalance: number;
 };
 
+export type ReportStatementSummary = {
+  totalSales: number;
+  totalExpenses: number;
+  totalSavings: number;
+  totalInvestments: number;
+  totalInvestorFunds: number;
+  totalRestocks: number;
+  netPosition: number;
+};
+
 type ReportSourceArgs = {
   sales: any[];
   expenses: any[];
@@ -26,6 +37,18 @@ type ReportSourceArgs = {
 };
 
 type BaseTransaction = Omit<ReportStatementRow, 'runningBalance'> & { timestamp: number };
+
+const COLORS = {
+  ink: [15, 23, 42] as const,
+  muted: [100, 116, 139] as const,
+  line: [226, 232, 240] as const,
+  surface: [248, 250, 252] as const,
+  accent: [159, 18, 57] as const,
+  success: [5, 150, 105] as const,
+  danger: [220, 38, 38] as const,
+};
+
+let logoPromise: Promise<HTMLImageElement | null> | null = null;
 
 export function getPresetRange(preset: Exclude<ReportRangePreset, 'custom'>) {
   const now = new Date();
@@ -63,6 +86,24 @@ function endOfDayMs(value: string) {
   return new Date(`${value}T23:59:59`).getTime();
 }
 
+function formatShortDate(value: string) {
+  return new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function formatGeneratedDate(value = new Date()) {
+  return value.toLocaleString('en-GH', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function transactionRef(prefix: string, value?: string | null, id?: string | null) {
   if (value && String(value).trim()) return String(value);
   return `${prefix}-${String(id ?? '').slice(0, 8).toUpperCase()}`;
@@ -73,14 +114,24 @@ function asTimestamp(value: string | null | undefined) {
   return Number.isFinite(next) ? next : 0;
 }
 
-function orderedTransactions({ sales, expenses, savings, investments, fundings, restocks }: Omit<ReportSourceArgs, 'from' | 'to'>) {
+function orderedTransactions({
+  sales,
+  expenses,
+  savings,
+  investments,
+  fundings,
+  restocks,
+}: Omit<ReportSourceArgs, 'from' | 'to'>) {
   const rows: BaseTransaction[] = [
     ...sales.map((sale) => ({
       date: sale.sale_date,
       timestamp: asTimestamp(sale.sale_date),
       reference: transactionRef('SAL', sale.reference, sale.id),
       type: 'Sale',
-      description: `${sale.customer_name || 'Walk-in'}${sale.payment_status ? ` • ${String(sale.payment_status).toUpperCase()}` : ''}`,
+      description: [
+        sale.customer_name || 'Walk-in',
+        sale.payment_status ? `Payment ${String(sale.payment_status).toUpperCase()}` : '',
+      ].filter(Boolean).join(' • '),
       moneyIn: Number(sale.total ?? 0),
       moneyOut: 0,
     })),
@@ -96,7 +147,7 @@ function orderedTransactions({ sales, expenses, savings, investments, fundings, 
     ...savings.map((saving) => ({
       date: saving.savings_date,
       timestamp: asTimestamp(saving.savings_date),
-      reference: transactionRef('SVG', saving.reference, saving.id),
+      reference: transactionRef('SAV', saving.reference, saving.id),
       type: 'Savings',
       description: [saving.source, saving.note].filter(Boolean).join(' • ') || 'Savings transfer',
       moneyIn: 0,
@@ -134,10 +185,23 @@ function orderedTransactions({ sales, expenses, savings, investments, fundings, 
   return rows.sort((left, right) => left.timestamp - right.timestamp || left.reference.localeCompare(right.reference));
 }
 
-export function buildReportStatement({ sales, expenses, savings, investments, fundings, restocks, from, to }: ReportSourceArgs) {
+export function buildReportStatement({
+  sales,
+  expenses,
+  savings,
+  investments,
+  fundings,
+  restocks,
+  from,
+  to,
+}: ReportSourceArgs) {
   const ordered = orderedTransactions({ sales, expenses, savings, investments, fundings, restocks });
   const fromMs = startOfDayMs(from);
   const toMs = endOfDayMs(to);
+  const inRange = (value: string | null | undefined) => {
+    const timestamp = asTimestamp(value);
+    return timestamp >= fromMs && timestamp <= toMs;
+  };
 
   const openingBalance = ordered
     .filter((row) => row.timestamp < fromMs)
@@ -159,6 +223,13 @@ export function buildReportStatement({ sales, expenses, savings, investments, fu
       };
     });
 
+  const totalSales = sales.filter((sale) => inRange(sale.sale_date)).reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
+  const totalExpenses = expenses.filter((expense) => inRange(expense.expense_date)).reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+  const totalSavings = savings.filter((saving) => inRange(saving.savings_date)).reduce((sum, saving) => sum + Number(saving.amount ?? 0), 0);
+  const totalInvestments = investments.filter((investment) => inRange(investment.investment_date)).reduce((sum, investment) => sum + Number(investment.amount ?? 0), 0);
+  const totalInvestorFunds = fundings.filter((funding) => inRange(funding.date_received)).reduce((sum, funding) => sum + Number(funding.amount ?? 0), 0);
+  const totalRestocks = restocks.filter((restock) => inRange(restock.restock_date)).reduce((sum, restock) => sum + Number(restock.total_cost ?? 0), 0);
+
   const totalMoneyIn = rows.reduce((sum, row) => sum + row.moneyIn, 0);
   const totalMoneyOut = rows.reduce((sum, row) => sum + row.moneyOut, 0);
   const closingBalance = openingBalance + totalMoneyIn - totalMoneyOut;
@@ -169,6 +240,15 @@ export function buildReportStatement({ sales, expenses, savings, investments, fu
     closingBalance,
     totalMoneyIn,
     totalMoneyOut,
+    summary: {
+      totalSales,
+      totalExpenses,
+      totalSavings,
+      totalInvestments,
+      totalInvestorFunds,
+      totalRestocks,
+      netPosition: totalSales + totalInvestorFunds - totalExpenses - totalSavings - totalInvestments - totalRestocks,
+    } satisfies ReportStatementSummary,
   };
 }
 
@@ -176,8 +256,110 @@ export function statementFilename(from: string, to: string) {
   return `report-slip-${from}-to-${to}.pdf`;
 }
 
-export function downloadReportSlipPdf({
+async function getLogoImage() {
+  if (!logoPromise) {
+    logoPromise = new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => resolve(null);
+      image.src = sikaflowLogo;
+    });
+  }
+  return logoPromise;
+}
+
+function drawHeader(
+  doc: jsPDF,
+  {
+    pageWidth,
+    businessName,
+    dateFrom,
+    dateTo,
+    logo,
+  }: {
+    pageWidth: number;
+    businessName: string;
+    dateFrom: string;
+    dateTo: string;
+    logo: HTMLImageElement | null;
+  },
+) {
+  doc.setFillColor(...COLORS.surface);
+  doc.rect(0, 0, pageWidth, 60, 'F');
+  doc.setDrawColor(...COLORS.line);
+  doc.line(0, 60, pageWidth, 60);
+
+  if (logo) {
+    doc.addImage(logo, 'PNG', 40, 15, 28, 28);
+  }
+
+  const brandX = logo ? 78 : 40;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...COLORS.ink);
+  doc.text('SikaFlow', brandX, 28);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.muted);
+  doc.text('Financial Statement', brandX, 42);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.ink);
+  doc.text(businessName, pageWidth - 40, 25, { align: 'right' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.muted);
+  doc.text(`${formatShortDate(dateFrom)} - ${formatShortDate(dateTo)}`, pageWidth - 40, 40, { align: 'right' });
+}
+
+function drawValueCard(
+  doc: jsPDF,
+  {
+    x,
+    y,
+    width,
+    label,
+    value,
+    tone,
+  }: {
+    x: number;
+    y: number;
+    width: number;
+    label: string;
+    value: string;
+    tone?: readonly [number, number, number];
+  },
+) {
+  doc.setDrawColor(...COLORS.line);
+  doc.roundedRect(x, y, width, 56, 10, 10);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.muted);
+  doc.text(label, x + 12, y + 18);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(...(tone ?? COLORS.ink));
+  doc.text(value, x + 12, y + 39);
+}
+
+function drawFooter(doc: jsPDF, pageNumber: number, totalPages: number) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  doc.setDrawColor(...COLORS.line);
+  doc.line(40, pageHeight - 34, pageWidth - 40, pageHeight - 34);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.muted);
+  doc.text('Generated by SikaFlow', 40, pageHeight - 18);
+  doc.text(`Page ${pageNumber} of ${totalPages}`, pageWidth - 40, pageHeight - 18, { align: 'right' });
+}
+
+export async function downloadReportSlipPdf({
   businessName,
+  generatedFor,
   dateFrom,
   dateTo,
   rows,
@@ -185,8 +367,10 @@ export function downloadReportSlipPdf({
   closingBalance,
   totalMoneyIn,
   totalMoneyOut,
+  summary,
 }: {
   businessName: string;
+  generatedFor: string;
   dateFrom: string;
   dateTo: string;
   rows: ReportStatementRow[];
@@ -194,6 +378,7 @@ export function downloadReportSlipPdf({
   closingBalance: number;
   totalMoneyIn: number;
   totalMoneyOut: number;
+  summary: ReportStatementSummary;
 }) {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -202,50 +387,82 @@ export function downloadReportSlipPdf({
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
-  doc.setFillColor(248, 250, 252);
-  doc.rect(0, 0, pageWidth, 122, 'F');
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const generatedAt = new Date();
+  const logo = await getLogoImage();
+
+  drawHeader(doc, { pageWidth, businessName, dateFrom, dateTo, logo });
 
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(159, 18, 57);
-  doc.setFontSize(10);
-  doc.text('REPORT SLIP', 40, 34);
-
-  doc.setTextColor(17, 24, 39);
   doc.setFontSize(22);
-  doc.text(businessName, 40, 58);
+  doc.setTextColor(...COLORS.ink);
+  doc.text('Financial Statement', 40, 94);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(11);
-  doc.setTextColor(75, 85, 99);
-  doc.text(`Financial statement • ${dateFrom} to ${dateTo}`, 40, 78);
-  doc.text(`Generated ${new Date().toLocaleString('en-GH')}`, 40, 95);
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.muted);
+  doc.text(`Business / User: ${businessName} • ${generatedFor}`, 40, 114);
+  doc.text(`Statement range: ${formatShortDate(dateFrom)} to ${formatShortDate(dateTo)}`, 40, 129);
+  doc.text(`Generated: ${formatGeneratedDate(generatedAt)}`, 40, 144);
 
-  const metricsTop = 150;
-  const metricWidth = (pageWidth - 110) / 4;
-  const metrics = [
-    ['Opening Balance', formatCurrency(openingBalance)],
-    ['Money In', formatCurrency(totalMoneyIn)],
-    ['Money Out', formatCurrency(totalMoneyOut)],
-    ['Closing Balance', formatCurrency(closingBalance)],
-  ];
+  const detailBoxX = pageWidth - 220;
+  doc.setDrawColor(...COLORS.line);
+  doc.roundedRect(detailBoxX, 84, 180, 70, 12, 12);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.ink);
+  doc.text('Statement Details', detailBoxX + 12, 102);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.muted);
+  doc.text(`Money In: ${formatCurrency(totalMoneyIn)}`, detailBoxX + 12, 122);
+  doc.text(`Money Out: ${formatCurrency(totalMoneyOut)}`, detailBoxX + 12, 136);
+  doc.text(`Closing Balance: ${formatCurrency(closingBalance)}`, detailBoxX + 12, 150);
 
-  metrics.forEach(([label, value], index) => {
-    const x = 40 + index * (metricWidth + 10);
-    doc.setDrawColor(229, 231, 235);
-    doc.roundedRect(x, metricsTop, metricWidth, 56, 10, 10);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(107, 114, 128);
-    doc.text(label, x + 12, metricsTop + 18);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
-    doc.setTextColor(17, 24, 39);
-    doc.text(value, x + 12, metricsTop + 40);
+  const metricGap = 10;
+  const metricWidth = (pageWidth - 80 - metricGap * 3) / 4;
+  const metricsTop = 176;
+
+  drawValueCard(doc, {
+    x: 40,
+    y: metricsTop,
+    width: metricWidth,
+    label: 'Opening Balance',
+    value: formatCurrency(openingBalance),
+  });
+  drawValueCard(doc, {
+    x: 40 + (metricWidth + metricGap),
+    y: metricsTop,
+    width: metricWidth,
+    label: 'Total Money In',
+    value: formatCurrency(totalMoneyIn),
+    tone: COLORS.success,
+  });
+  drawValueCard(doc, {
+    x: 40 + (metricWidth + metricGap) * 2,
+    y: metricsTop,
+    width: metricWidth,
+    label: 'Total Money Out',
+    value: formatCurrency(totalMoneyOut),
+    tone: COLORS.danger,
+  });
+  drawValueCard(doc, {
+    x: 40 + (metricWidth + metricGap) * 3,
+    y: metricsTop,
+    width: metricWidth,
+    label: 'Closing Balance',
+    value: formatCurrency(closingBalance),
   });
 
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...COLORS.ink);
+  doc.text('Transaction Statement', 40, 260);
+
   autoTable(doc, {
-    startY: metricsTop + 76,
-    head: [['Date', 'Reference', 'Type', 'Description', 'Money In', 'Money Out', 'Balance']],
+    startY: 272,
+    margin: { top: 72, right: 40, bottom: 56, left: 40 },
+    head: [['Date', 'Reference ID', 'Transaction Type', 'Description', 'Money In', 'Money Out', 'Balance']],
     body: rows.map((row) => [
       new Date(row.date).toLocaleDateString('en-GH'),
       row.reference,
@@ -258,41 +475,100 @@ export function downloadReportSlipPdf({
     styles: {
       font: 'helvetica',
       fontSize: 8.5,
-      cellPadding: 5,
-      textColor: [17, 24, 39],
-      lineColor: [229, 231, 235],
-      lineWidth: 0.4,
+      cellPadding: { top: 6, right: 5, bottom: 6, left: 5 },
+      textColor: COLORS.ink,
+      lineColor: COLORS.line,
+      lineWidth: 0.3,
+      overflow: 'linebreak',
+      valign: 'top',
     },
     headStyles: {
-      fillColor: [241, 245, 249],
-      textColor: [75, 85, 99],
+      fillColor: COLORS.ink,
+      textColor: [255, 255, 255],
       fontStyle: 'bold',
+      lineColor: COLORS.ink,
+    },
+    alternateRowStyles: {
+      fillColor: [250, 250, 252],
     },
     columnStyles: {
-      0: { cellWidth: 52 },
-      1: { cellWidth: 76 },
-      2: { cellWidth: 62 },
-      3: { cellWidth: 145 },
-      4: { halign: 'right', cellWidth: 60 },
-      5: { halign: 'right', cellWidth: 60 },
-      6: { halign: 'right', cellWidth: 60 },
+      0: { cellWidth: 58 },
+      1: { cellWidth: 82 },
+      2: { cellWidth: 76 },
+      3: { cellWidth: 140 },
+      4: { cellWidth: 55, halign: 'right' },
+      5: { cellWidth: 55, halign: 'right' },
+      6: { cellWidth: 59, halign: 'right' },
     },
-    margin: { left: 40, right: 40 },
-    theme: 'grid',
-    didDrawPage: ({ pageNumber }) => {
-      doc.setFontSize(9);
-      doc.setTextColor(107, 114, 128);
-      doc.text(`Page ${pageNumber}`, pageWidth - 70, doc.internal.pageSize.getHeight() - 18);
+    didParseCell: (hookData) => {
+      if (hookData.section !== 'body') return;
+      const sourceRow = rows[hookData.row.index];
+      if (!sourceRow) return;
+      if (hookData.column.index === 4 && sourceRow.moneyIn > 0) {
+        hookData.cell.styles.textColor = COLORS.success;
+      }
+      if (hookData.column.index === 5 && sourceRow.moneyOut > 0) {
+        hookData.cell.styles.textColor = COLORS.danger;
+      }
+      if (hookData.column.index === 6) {
+        hookData.cell.styles.fontStyle = 'bold';
+      }
     },
   });
 
-  const finalY = (doc as any).lastAutoTable?.finalY ?? metricsTop + 120;
-  doc.setDrawColor(229, 231, 235);
-  doc.line(40, finalY + 18, pageWidth - 40, finalY + 18);
+  let summaryStartY = ((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 300) + 26;
+  if (summaryStartY + 160 > pageHeight - 56) {
+    doc.addPage();
+    summaryStartY = 92;
+  }
+
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  doc.setTextColor(17, 24, 39);
-  doc.text(`Summary: In ${formatCurrency(totalMoneyIn)} • Out ${formatCurrency(totalMoneyOut)} • Closing ${formatCurrency(closingBalance)}`, 40, finalY + 38);
+  doc.setTextColor(...COLORS.ink);
+  doc.text('Statement Summary', 40, summaryStartY);
+
+  autoTable(doc, {
+    startY: summaryStartY + 10,
+    margin: { left: 40, right: 40 },
+    theme: 'grid',
+    body: [
+      ['Total Sales', formatCurrency(summary.totalSales), 'Total Expenses', formatCurrency(summary.totalExpenses)],
+      ['Total Savings', formatCurrency(summary.totalSavings), 'Total Investments', formatCurrency(summary.totalInvestments)],
+      ['Total Investor Funds', formatCurrency(summary.totalInvestorFunds), 'Net Position', formatCurrency(summary.netPosition)],
+    ],
+    styles: {
+      font: 'helvetica',
+      fontSize: 9,
+      cellPadding: { top: 6, right: 6, bottom: 6, left: 6 },
+      lineColor: COLORS.line,
+      lineWidth: 0.3,
+      textColor: COLORS.ink,
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold', cellWidth: 120 },
+      1: { halign: 'right', cellWidth: 110 },
+      2: { fontStyle: 'bold', cellWidth: 120 },
+      3: { halign: 'right', cellWidth: 125 },
+    },
+  });
+
+  const noteY = (((doc as jsPDF & { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? summaryStartY + 60) + 16);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(...COLORS.muted);
+  doc.text(
+    `Net position reflects total sales and investor funds against expenses, savings, investments, and ${formatCurrency(summary.totalRestocks)} in restock spending.`,
+    40,
+    noteY,
+    { maxWidth: pageWidth - 80 },
+  );
+
+  const totalPages = doc.getNumberOfPages();
+  for (let page = 1; page <= totalPages; page += 1) {
+    doc.setPage(page);
+    drawHeader(doc, { pageWidth, businessName, dateFrom, dateTo, logo });
+    drawFooter(doc, page, totalPages);
+  }
 
   doc.save(statementFilename(dateFrom, dateTo));
 }

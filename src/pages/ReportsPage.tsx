@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { formatCurrency } from '@/lib/constants';
 import { supabase } from '@/integrations/supabase/client';
 import { useBusiness } from '@/context/BusinessContext';
+import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -103,6 +104,7 @@ function computePeriodStats({
 export default function ReportsPage() {
   const defaultRange = getPresetRange('month');
   const { business } = useBusiness();
+  const { displayName, user } = useAuth();
   const { toast } = useToast();
   const [preset, setPreset] = useState<ReportRangePreset>('month');
   const [dateFrom, setDateFrom] = useState(defaultRange.from);
@@ -117,6 +119,7 @@ export default function ReportsPage() {
     restocks: [],
   });
   const [loading, setLoading] = useState(true);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [salesChartType, setSalesChartType] = useState<'bar' | 'line'>('bar');
 
   const fetchReport = useCallback(async () => {
@@ -241,7 +244,7 @@ export default function ReportsPage() {
     setDateTo(value);
   };
 
-  const handleDownloadSlip = () => {
+  const handleDownloadSlip = async () => {
     if (invalidRange) {
       toast({
         title: 'Fix the date range',
@@ -259,16 +262,29 @@ export default function ReportsPage() {
       return;
     }
 
-    downloadReportSlipPdf({
-      businessName: business?.name || 'SikaFlow Business',
-      dateFrom,
-      dateTo,
-      rows: statement.rows,
-      openingBalance: statement.openingBalance,
-      closingBalance: statement.closingBalance,
-      totalMoneyIn: statement.totalMoneyIn,
-      totalMoneyOut: statement.totalMoneyOut,
-    });
+    setPdfLoading(true);
+    try {
+      await downloadReportSlipPdf({
+        businessName: business?.name || 'SikaFlow Business',
+        generatedFor: displayName || user?.email || 'SikaFlow User',
+        dateFrom,
+        dateTo,
+        rows: statement.rows,
+        openingBalance: statement.openingBalance,
+        closingBalance: statement.closingBalance,
+        totalMoneyIn: statement.totalMoneyIn,
+        totalMoneyOut: statement.totalMoneyOut,
+        summary: statement.summary,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Could not generate statement',
+        description: error?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setPdfLoading(false);
+    }
   };
 
   return (
@@ -329,8 +345,8 @@ export default function ReportsPage() {
                 Combined statement for sales, expenses, savings, investments, investor funds, and stock restocks.
               </p>
             </div>
-            <Button onClick={handleDownloadSlip} disabled={invalidRange || statement.rows.length === 0}>
-              <Download className="mr-1.5 h-4 w-4" /> Download Slip PDF
+            <Button onClick={() => void handleDownloadSlip()} disabled={invalidRange || statement.rows.length === 0 || pdfLoading}>
+              <Download className="mr-1.5 h-4 w-4" /> {pdfLoading ? 'Generating PDF...' : 'Download Slip PDF'}
             </Button>
           </CardHeader>
           <CardContent className="space-y-5 p-4 sm:p-6">
@@ -379,7 +395,7 @@ export default function ReportsPage() {
                             <TableCell className="text-xs">{new Date(row.date).toLocaleDateString('en-GH')}</TableCell>
                             <TableCell className="font-medium">{row.reference}</TableCell>
                             <TableCell>{row.type}</TableCell>
-                            <TableCell className="max-w-[280px] truncate text-muted-foreground">{row.description}</TableCell>
+                            <TableCell className="max-w-[280px] whitespace-normal text-muted-foreground">{row.description}</TableCell>
                             <TableCell className="text-right text-emerald-600 dark:text-emerald-400">
                               {row.moneyIn > 0 ? formatCurrency(row.moneyIn) : '—'}
                             </TableCell>
