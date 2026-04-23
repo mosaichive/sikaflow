@@ -4,7 +4,7 @@ import { useSubscription } from '@/context/SubscriptionContext';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Logo } from '@/components/Logo';
 import { Button } from '@/components/ui/button';
-import { LayoutDashboard, Building2, CreditCard, Receipt, Megaphone, ShieldAlert, LogOut, Wallet } from 'lucide-react';
+import { LayoutDashboard, Building2, CreditCard, Receipt, Megaphone, ShieldAlert, LogOut, Wallet, ImagePlus } from 'lucide-react';
 import { BrandLoader } from '@/components/BrandLoader';
 
 const NAV = [
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/platform/subscriptions', label: 'Subscriptions', icon: CreditCard },
   { to: '/platform/payments', label: 'Payments', icon: Receipt },
   { to: '/platform/payment-methods', label: 'Payment Methods', icon: Wallet },
+  { to: '/platform/ads', label: 'Ads', icon: ImagePlus },
   { to: '/platform/announcements', label: 'Announcements', icon: Megaphone },
 ];
 

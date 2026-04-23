@@ -31,6 +31,7 @@ import { useSubscription } from '@/context/SubscriptionContext';
 import { toast } from 'sonner';
 import { QuickTour } from '@/components/QuickTour';
 import { cn } from '@/lib/utils';
+import { DashboardAdsStrip, type DashboardAd } from '@/components/dashboard/DashboardAdsStrip';
 
 const DAY_MS = 86400000;
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -194,6 +195,7 @@ export default function Dashboard() {
   const [selectedYear, setSelectedYear] = useState(() => String(now.getFullYear()));
   const [chartType, setChartType] = useState<'bar' | 'line'>('bar');
   const [tourOpen, setTourOpen] = useState(false);
+  const [ads, setAds] = useState<DashboardAd[]>([]);
   const { business } = useBusiness();
   const { subscription, isReadOnly } = useSubscription();
   const navigate = useNavigate();
@@ -229,8 +231,19 @@ export default function Dashboard() {
     });
   }, []);
 
+  const loadAds = useCallback(async () => {
+    const { data } = await supabase
+      .from('platform_ads' as any)
+      .select('id,title,description,image_url,cta_text,cta_url')
+      .eq('active', true)
+      .order('sort_order')
+      .order('created_at');
+    setAds((data as DashboardAd[]) ?? []);
+  }, []);
+
   useEffect(() => {
     void fetchData();
+    void loadAds();
     const refresh = () => { void fetchData(); };
     const channel = supabase.channel('dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, refresh)
@@ -240,10 +253,11 @@ export default function Dashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_ads' }, () => { void loadAds(); })
       .subscribe();
 
     return () => { void supabase.removeChannel(channel); };
-  }, [fetchData]);
+  }, [fetchData, loadAds]);
 
   useEffect(() => {
     if (!business?.id) return;
@@ -367,6 +381,7 @@ export default function Dashboard() {
       <BusinessOnboardingDialog open={!business} onCompleted={() => { void fetchData(); }} />
       <div className="space-y-5 animate-fade-in">
         <SubscriptionBanner />
+        <DashboardAdsStrip ads={ads} />
 
         <section className="rounded-lg border border-border bg-card p-4 sm:p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

@@ -25,6 +25,7 @@ import SubscriptionsPage from "./pages/platform/SubscriptionsPage";
 import PaymentsPage from "./pages/platform/PaymentsPage";
 import PaymentMethodsPage from "./pages/platform/PaymentMethodsPage";
 import AnnouncementsPage from "./pages/platform/AnnouncementsPage";
+import AdsPage from "./pages/platform/AdsPage";
 import NotFound from "./pages/NotFound";
 import { BrandLoader } from "./components/BrandLoader";
 
@@ -105,6 +106,7 @@ const App = () => (
                   <Route path="subscriptions" element={<SubscriptionsPage />} />
                   <Route path="payments" element={<PaymentsPage />} />
                   <Route path="payment-methods" element={<PaymentMethodsPage />} />
+                  <Route path="ads" element={<AdsPage />} />
                   <Route path="announcements" element={<AnnouncementsPage />} />
                 </Route>
 
