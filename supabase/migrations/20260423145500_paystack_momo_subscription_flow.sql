@@ -34,6 +34,11 @@ ALTER TABLE public.payments
   ALTER COLUMN requested_plan SET DEFAULT 'monthly';
 
 ALTER TABLE public.payments
+  DROP CONSTRAINT IF EXISTS payments_status_chk,
+  DROP CONSTRAINT IF EXISTS payments_requested_plan_chk,
+  DROP CONSTRAINT IF EXISTS payments_resolved_plan_chk;
+
+ALTER TABLE public.payments
   ADD CONSTRAINT payments_status_chk
   CHECK (status IN ('pending','confirmed','failed','cancelled','timeout','review','rejected','refunded'));
 
@@ -67,11 +72,13 @@ CREATE INDEX IF NOT EXISTS payment_events_business_idx ON public.payment_events(
 
 ALTER TABLE public.payment_events ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Members view own payment events" ON public.payment_events;
 CREATE POLICY "Members view own payment events"
 ON public.payment_events
 FOR SELECT TO authenticated
 USING (business_id = public.get_user_business_id(auth.uid()));
 
+DROP POLICY IF EXISTS "Super admin full access payment events" ON public.payment_events;
 CREATE POLICY "Super admin full access payment events"
 ON public.payment_events
 FOR ALL TO authenticated
