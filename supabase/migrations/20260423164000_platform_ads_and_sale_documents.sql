@@ -237,7 +237,8 @@ FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 -- -------------------------------------------------------------------------
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF to_regclass('public.platform_ads') IS NOT NULL
+    AND NOT EXISTS (
     SELECT 1
     FROM pg_publication_tables
     WHERE pubname = 'supabase_realtime'
@@ -250,7 +251,8 @@ END $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF to_regclass('public.sale_documents') IS NOT NULL
+    AND NOT EXISTS (
     SELECT 1
     FROM pg_publication_tables
     WHERE pubname = 'supabase_realtime'
