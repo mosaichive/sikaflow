@@ -2,25 +2,27 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
-import { StatusBadge } from '@/components/StatusBadge';
 import { formatCurrency } from '@/lib/constants';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   AlertTriangle,
+  ArrowDownRight,
   ArrowRight,
+  ArrowUpRight,
   BarChart3,
-  DollarSign,
+  CalendarDays,
+  HandCoins,
   LineChart as LineChartIcon,
+  Minus,
   Package,
+  PiggyBank,
+  Receipt,
   ShoppingCart,
   Sparkles,
-  TrendingDown,
   TrendingUp,
-  Users,
   Wallet,
 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -28,6 +30,7 @@ import { SubscriptionBanner } from '@/components/SubscriptionBanner';
 import { BusinessOnboardingDialog } from '@/components/BusinessOnboardingDialog';
 import { useBusiness } from '@/context/BusinessContext';
 import { useSubscription } from '@/context/SubscriptionContext';
+import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import { QuickTour } from '@/components/QuickTour';
 import { cn } from '@/lib/utils';
@@ -35,6 +38,114 @@ import { DashboardAdsStrip, type DashboardAd } from '@/components/dashboard/Dash
 
 const DAY_MS = 86400000;
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+type Sale = {
+  id: string;
+  total: number | string;
+  balance: number | string;
+  sale_date: string;
+  customer_name: string | null;
+  payment_status: string;
+  reference?: string | null;
+};
+
+type Expense = {
+  id: string;
+  amount: number | string;
+  expense_date: string;
+  category?: string | null;
+  description?: string | null;
+  reference?: string | null;
+};
+
+type Product = {
+  quantity: number | null;
+  reorder_level: number;
+};
+
+type SaleItem = {
+  sale_id: string;
+  cost_price: number | string;
+  quantity: number;
+};
+
+type Savings = {
+  id: string;
+  amount: number | string;
+  savings_date: string;
+  source?: string | null;
+  reference?: string | null;
+};
+
+type Investment = {
+  id: string;
+  amount: number | string;
+  investment_date: string;
+  investment_name?: string | null;
+  reference?: string | null;
+};
+
+type Funding = {
+  id: string;
+  amount: number | string;
+  date_received: string;
+  investor_name?: string | null;
+  reference?: string | null;
+};
+
+type Restock = {
+  id: string;
+  total_cost: number | string;
+  quantity_added: number;
+  restock_date: string;
+};
+
+type SaleDocument = {
+  id: string;
+  kind: string;
+  issued_at: string;
+};
+
+type RawData = {
+  sales: Sale[];
+  expenses: Expense[];
+  products: Product[];
+  saleItems: SaleItem[];
+  savings: Savings[];
+  investments: Investment[];
+  funding: Funding[];
+  restocks: Restock[];
+  saleDocuments: SaleDocument[];
+};
+
+type Metrics = {
+  totalRevenue: number;
+  totalProfit: number;
+  totalExpenses: number;
+  netProfit: number;
+  outstandingBalance: number;
+  lowStockCount: number;
+  totalSavings: number;
+  totalInvestments: number;
+  totalFunding: number;
+  totalRestockSpending: number;
+  availableCash: number;
+  qtySold: number;
+  qtyRestocked: number;
+  stockLeft: number;
+  totalInvoices: number;
+};
+
+type RecentTransaction = {
+  id: string;
+  label: string;
+  sublabel: string;
+  amount: number;
+  direction: 'in' | 'out';
+  date: string;
+  icon: React.ComponentType<{ className?: string }>;
+  toneClass: string;
+};
 
 function formatUtcDate(date: Date) {
   const year = date.getUTCFullYear();
@@ -53,86 +164,22 @@ function getMonthRange(month: number, year: number) {
   };
 }
 
-interface Sale {
-  id: string;
-  total: number | string;
-  balance: number | string;
-  sale_date: string;
-  customer_name: string | null;
-  payment_status: string;
-}
-
-interface Expense {
-  amount: number | string;
-  expense_date: string;
-}
-
-interface Product {
-  quantity: number | null;
-  reorder_level: number;
-}
-
-interface SaleItem {
-  sale_id: string;
-  cost_price: number | string;
-  quantity: number;
-}
-
-interface Savings {
-  amount: number | string;
-  savings_date: string;
-}
-
-interface Investment {
-  amount: number | string;
-  investment_date: string;
-}
-
-interface Funding {
-  amount: number | string;
-  date_received: string;
-}
-
-interface Restock {
-  total_cost: number | string;
-  quantity_added: number;
-  restock_date: string;
-}
-
-interface RawData {
-  sales: Sale[];
-  expenses: Expense[];
-  products: Product[];
-  saleItems: SaleItem[];
-  savings: Savings[];
-  investments: Investment[];
-  funding: Funding[];
-  restocks: Restock[];
-}
-
-interface Metrics {
-  totalRevenue: number;
-  totalProfit: number;
-  totalExpenses: number;
-  netProfit: number;
-  outstandingBalance: number;
-  lowStockCount: number;
-  totalSavings: number;
-  totalInvestments: number;
-  totalFunding: number;
-  totalRestockSpending: number;
-  availableCash: number;
-  qtySold: number;
-  qtyRestocked: number;
-  stockLeft: number;
+function getPreviousMonthRange(month: number, year: number) {
+  const start = new Date(Date.UTC(year, month, 1));
+  start.setUTCMonth(start.getUTCMonth() - 1);
+  return getMonthRange(start.getUTCMonth(), start.getUTCFullYear());
 }
 
 function inDateRange(dateStr: string, from: string, to: string): boolean {
-  if (!from || !to) return true;
   const date = new Date(dateStr).getTime();
   const start = new Date(`${from}T00:00:00`).getTime();
   const end = new Date(`${to}T23:59:59`).getTime();
   return date >= start && date <= end;
+}
+
+function buildReference(prefix: string, value?: string | null, id?: string | null) {
+  if (value && value.trim()) return value.trim();
+  return `${prefix}-${String(id ?? '').slice(0, 8).toUpperCase()}`;
 }
 
 function calcMetrics(
@@ -144,22 +191,24 @@ function calcMetrics(
   investments: Investment[],
   funding: Funding[],
   restocks: Restock[],
+  saleDocuments: SaleDocument[],
 ): Metrics {
-  const totalRevenue = sales.reduce((sum, row) => sum + Number(row.total), 0);
-  const totalCost = saleItems.reduce((sum, item) => sum + Number(item.cost_price) * item.quantity, 0);
+  const totalRevenue = sales.reduce((sum, row) => sum + Number(row.total ?? 0), 0);
+  const totalCost = saleItems.reduce((sum, item) => sum + Number(item.cost_price ?? 0) * Number(item.quantity ?? 0), 0);
   const totalProfit = totalRevenue - totalCost;
-  const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
+  const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
   const netProfit = totalProfit - totalExpenses;
-  const outstandingBalance = sales.reduce((sum, row) => sum + Number(row.balance), 0);
-  const lowStockCount = products.filter((product) => product.quantity <= product.reorder_level).length;
-  const totalSavings = savings.reduce((sum, row) => sum + Number(row.amount), 0);
-  const totalInvestments = investments.reduce((sum, row) => sum + Number(row.amount), 0);
-  const totalFunding = funding.reduce((sum, row) => sum + Number(row.amount), 0);
-  const totalRestockSpending = restocks.reduce((sum, row) => sum + Number(row.total_cost), 0);
+  const outstandingBalance = sales.reduce((sum, row) => sum + Number(row.balance ?? 0), 0);
+  const lowStockCount = products.filter((product) => Number(product.quantity ?? 0) <= Number(product.reorder_level ?? 0)).length;
+  const totalSavings = savings.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const totalInvestments = investments.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const totalFunding = funding.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  const totalRestockSpending = restocks.reduce((sum, row) => sum + Number(row.total_cost ?? 0), 0);
   const availableCash = totalRevenue + totalFunding - totalExpenses - totalSavings - totalInvestments - totalRestockSpending;
-  const qtySold = saleItems.reduce((sum, item) => sum + item.quantity, 0);
-  const qtyRestocked = restocks.reduce((sum, row) => sum + row.quantity_added, 0);
-  const stockLeft = products.reduce((sum, product) => sum + Math.max(0, Number(product.quantity) || 0), 0);
+  const qtySold = saleItems.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
+  const qtyRestocked = restocks.reduce((sum, row) => sum + Number(row.quantity_added ?? 0), 0);
+  const stockLeft = products.reduce((sum, product) => sum + Math.max(0, Number(product.quantity ?? 0)), 0);
+  const totalInvoices = saleDocuments.filter((document) => document.kind === 'invoice').length;
 
   return {
     totalRevenue,
@@ -176,11 +225,119 @@ function calcMetrics(
     qtySold,
     qtyRestocked,
     stockLeft,
+    totalInvoices,
   };
+}
+
+function getGreeting(hour: number) {
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getDisplayFirstName(displayName: string, fallback: string) {
+  const source = displayName.trim() || fallback.trim();
+  return source.split(/\s+/)[0] || 'there';
+}
+
+function getMetricDelta(current: number, previous: number, improveWhen: 'up' | 'down' = 'up') {
+  const difference = current - previous;
+  if (Math.abs(difference) < 0.01) {
+    return { state: 'neutral' as const, label: 'No change', icon: Minus };
+  }
+  if (Math.abs(previous) < 0.01) {
+    const up = difference > 0;
+    return {
+      state: improveWhen === 'up' ? (up ? 'positive' : 'negative') : (up ? 'negative' : 'positive'),
+      label: 'New this month',
+      icon: up ? ArrowUpRight : ArrowDownRight,
+    };
+  }
+
+  const percent = Math.abs((difference / Math.abs(previous)) * 100);
+  const direction = difference > 0 ? 'up' : 'down';
+  return {
+    state: improveWhen === direction ? 'positive' as const : 'negative' as const,
+    label: `${percent.toFixed(1)}% from last month`,
+    icon: direction === 'up' ? ArrowUpRight : ArrowDownRight,
+  };
+}
+
+function buildRecentTransactions({
+  sales,
+  expenses,
+  savings,
+  investments,
+  funding,
+}: {
+  sales: Sale[];
+  expenses: Expense[];
+  savings: Savings[];
+  investments: Investment[];
+  funding: Funding[];
+}): RecentTransaction[] {
+  return [
+    ...sales.map((sale) => ({
+      id: `sale-${sale.id}`,
+      label: `Sale - ${buildReference('SAL', sale.reference, sale.id)}`,
+      sublabel: `${new Date(sale.sale_date).toLocaleDateString('en-GH')} • ${sale.customer_name || 'Walk-in'}`,
+      amount: Number(sale.total ?? 0),
+      direction: 'in' as const,
+      date: sale.sale_date,
+      icon: ShoppingCart,
+      toneClass: 'bg-violet-500/15 text-violet-400',
+    })),
+    ...expenses.map((expense) => ({
+      id: `expense-${expense.id}`,
+      label: `Expense - ${buildReference('EXP', expense.reference, expense.id)}`,
+      sublabel: `${new Date(expense.expense_date).toLocaleDateString('en-GH')} • ${expense.category || 'Expense'}`,
+      amount: Number(expense.amount ?? 0),
+      direction: 'out' as const,
+      date: expense.expense_date,
+      icon: Receipt,
+      toneClass: 'bg-rose-500/15 text-rose-400',
+    })),
+    ...savings.map((saving) => ({
+      id: `saving-${saving.id}`,
+      label: `Saving - ${buildReference('SAV', saving.reference, saving.id)}`,
+      sublabel: `${new Date(saving.savings_date).toLocaleDateString('en-GH')} • ${saving.source || 'Savings transfer'}`,
+      amount: Number(saving.amount ?? 0),
+      direction: 'out' as const,
+      date: saving.savings_date,
+      icon: PiggyBank,
+      toneClass: 'bg-emerald-500/15 text-emerald-400',
+    })),
+    ...investments.map((investment) => ({
+      id: `investment-${investment.id}`,
+      label: `Investment - ${buildReference('INV', investment.reference, investment.id)}`,
+      sublabel: `${new Date(investment.investment_date).toLocaleDateString('en-GH')} • ${investment.investment_name || 'Investment'}`,
+      amount: Number(investment.amount ?? 0),
+      direction: 'out' as const,
+      date: investment.investment_date,
+      icon: TrendingUp,
+      toneClass: 'bg-blue-500/15 text-blue-400',
+    })),
+    ...funding.map((entry) => ({
+      id: `funding-${entry.id}`,
+      label: `Investor Fund - ${buildReference('IF', entry.reference, entry.id)}`,
+      sublabel: `${new Date(entry.date_received).toLocaleDateString('en-GH')} • ${entry.investor_name || 'Investor funding'}`,
+      amount: Number(entry.amount ?? 0),
+      direction: 'in' as const,
+      date: entry.date_received,
+      icon: HandCoins,
+      toneClass: 'bg-amber-500/15 text-amber-400',
+    })),
+  ]
+    .sort((left, right) => new Date(right.date).getTime() - new Date(left.date).getTime())
+    .slice(0, 5);
 }
 
 export default function Dashboard() {
   const now = new Date();
+  const { business } = useBusiness();
+  const { subscription, isReadOnly } = useSubscription();
+  const { displayName } = useAuth();
+  const navigate = useNavigate();
   const [raw, setRaw] = useState<RawData>({
     sales: [],
     expenses: [],
@@ -190,25 +347,38 @@ export default function Dashboard() {
     investments: [],
     funding: [],
     restocks: [],
+    saleDocuments: [],
   });
   const [selectedMonth, setSelectedMonth] = useState(() => String(now.getMonth()));
   const [selectedYear, setSelectedYear] = useState(() => String(now.getFullYear()));
-  const [chartType, setChartType] = useState<'bar' | 'line'>('bar');
+  const [chartType, setChartType] = useState<'bar' | 'line'>('line');
   const [tourOpen, setTourOpen] = useState(false);
   const [ads, setAds] = useState<DashboardAd[]>([]);
-  const { business } = useBusiness();
-  const { subscription, isReadOnly } = useSubscription();
-  const navigate = useNavigate();
 
   const selectedRange = useMemo(
     () => getMonthRange(Number(selectedMonth), Number(selectedYear)),
     [selectedMonth, selectedYear],
   );
-  const dateFrom = selectedRange.from;
-  const dateTo = selectedRange.to;
+  const previousRange = useMemo(
+    () => getPreviousMonthRange(Number(selectedMonth), Number(selectedYear)),
+    [selectedMonth, selectedYear],
+  );
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const isCurrentMonth = Number(selectedMonth) === currentMonth && Number(selectedYear) === currentYear;
 
   const fetchData = useCallback(async () => {
-    const [salesRes, expensesRes, productsRes, saleItemsRes, savingsRes, investRes, fundingRes, restockRes] = await Promise.all([
+    const [
+      salesRes,
+      expensesRes,
+      productsRes,
+      saleItemsRes,
+      savingsRes,
+      investRes,
+      fundingRes,
+      restockRes,
+      saleDocsRes,
+    ] = await Promise.all([
       supabase.from('sales').select('*').order('sale_date', { ascending: false }),
       supabase.from('expenses').select('*'),
       supabase.from('products').select('*'),
@@ -217,6 +387,7 @@ export default function Dashboard() {
       supabase.from('investments').select('*'),
       supabase.from('investor_funding').select('*'),
       supabase.from('restocks').select('*'),
+      supabase.from('sale_documents' as any).select('id,kind,issued_at'),
     ]);
 
     setRaw({
@@ -228,6 +399,7 @@ export default function Dashboard() {
       investments: (investRes.data as Investment[] | null) || [],
       funding: (fundingRes.data as Funding[] | null) || [],
       restocks: (restockRes.data as Restock[] | null) || [],
+      saleDocuments: (saleDocsRes.data as SaleDocument[] | null) || [],
     });
   }, []);
 
@@ -245,7 +417,8 @@ export default function Dashboard() {
     void fetchData();
     void loadAds();
     const refresh = () => { void fetchData(); };
-    const channel = supabase.channel('dashboard')
+    const channel = supabase
+      .channel('dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, refresh)
@@ -253,10 +426,13 @@ export default function Dashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sale_documents' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_ads' }, () => { void loadAds(); })
       .subscribe();
 
-    return () => { void supabase.removeChannel(channel); };
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   }, [fetchData, loadAds]);
 
   useEffect(() => {
@@ -295,67 +471,6 @@ export default function Dashboard() {
     return () => clearTimeout(timer);
   }, [isReadOnly, navigate, subscription]);
 
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
-  const isCurrentMonth = Number(selectedMonth) === currentMonth && Number(selectedYear) === currentYear;
-  const hasFilter = true;
-  const overall = useMemo(
-    () => calcMetrics(raw.sales, raw.expenses, raw.products, raw.saleItems, raw.savings, raw.investments, raw.funding, raw.restocks),
-    [raw],
-  );
-
-  const filtered = useMemo(() => {
-    if (!hasFilter) return null;
-    const fSales = raw.sales.filter((sale) => inDateRange(sale.sale_date, dateFrom, dateTo));
-    const fExpenses = raw.expenses.filter((expense) => inDateRange(expense.expense_date, dateFrom, dateTo));
-    const saleDates = new Map(raw.sales.map((sale) => [sale.id, sale.sale_date]));
-    const fSaleItems = raw.saleItems.filter((item) => {
-      const saleDate = saleDates.get(item.sale_id);
-      return saleDate ? inDateRange(saleDate, dateFrom, dateTo) : false;
-    });
-    const fSavings = raw.savings.filter((saving) => inDateRange(saving.savings_date, dateFrom, dateTo));
-    const fInvestments = raw.investments.filter((investment) => inDateRange(investment.investment_date, dateFrom, dateTo));
-    const fFunding = raw.funding.filter((funding) => inDateRange(funding.date_received, dateFrom, dateTo));
-    const fRestocks = raw.restocks.filter((restock) => inDateRange(restock.restock_date, dateFrom, dateTo));
-    return calcMetrics(fSales, fExpenses, raw.products, fSaleItems, fSavings, fInvestments, fFunding, fRestocks);
-  }, [raw, dateFrom, dateTo, hasFilter]);
-
-  const chartData = useMemo(() => {
-    const start = hasFilter ? new Date(`${dateFrom}T00:00:00`) : new Date(Date.now() - 6 * DAY_MS);
-    const end = hasFilter ? new Date(`${dateTo}T00:00:00`) : new Date();
-    const dayCount = Math.max(1, Math.min(62, Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1));
-    return Array.from({ length: dayCount }, (_, index) => {
-      const date = new Date(start.getTime() + index * DAY_MS);
-      const dayStr = date.toISOString().slice(0, 10);
-      const label = dayCount <= 10
-        ? date.toLocaleDateString('en-GB', { weekday: 'short' })
-        : date.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
-      const sales = raw.sales
-        .filter((sale) => sale.sale_date.slice(0, 10) === dayStr)
-        .reduce((sum, sale) => sum + Number(sale.total), 0);
-      return { name: label, sales };
-    });
-  }, [raw.sales, hasFilter, dateFrom, dateTo]);
-
-  const recentSales = useMemo(() => {
-    const source = hasFilter ? raw.sales.filter((sale) => inDateRange(sale.sale_date, dateFrom, dateTo)) : raw.sales;
-    return source.slice(0, 5);
-  }, [raw.sales, hasFilter, dateFrom, dateTo]);
-
-  const todayMetrics = useMemo(() => {
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const weekStart = new Date(now.getTime() - 7 * 86400000).toISOString();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    return {
-      todaySales: raw.sales.filter((sale) => sale.sale_date >= todayStart).reduce((sum, sale) => sum + Number(sale.total), 0),
-      weeklySales: raw.sales.filter((sale) => sale.sale_date >= weekStart).reduce((sum, sale) => sum + Number(sale.total), 0),
-      monthlySales: raw.sales.filter((sale) => sale.sale_date >= monthStart).reduce((sum, sale) => sum + Number(sale.total), 0),
-    };
-  }, [raw.sales]);
-
-  const activeMetrics = filtered ?? overall;
-  const filterLabel = selectedRange.label;
   const availableYears = useMemo(() => {
     const years = new Set<number>([currentYear]);
     const dates = [
@@ -365,6 +480,7 @@ export default function Dashboard() {
       ...raw.investments.map((investment) => investment.investment_date),
       ...raw.funding.map((funding) => funding.date_received),
       ...raw.restocks.map((restock) => restock.restock_date),
+      ...raw.saleDocuments.map((document) => document.issued_at),
     ];
 
     for (const value of dates) {
@@ -373,130 +489,173 @@ export default function Dashboard() {
     }
 
     return Array.from(years).sort((left, right) => right - left);
-  }, [currentYear, raw.expenses, raw.funding, raw.investments, raw.restocks, raw.sales, raw.savings]);
+  }, [currentYear, raw.expenses, raw.funding, raw.investments, raw.restocks, raw.saleDocuments, raw.sales, raw.savings]);
+
+  const filtered = useMemo(() => {
+    const sales = raw.sales.filter((sale) => inDateRange(sale.sale_date, selectedRange.from, selectedRange.to));
+    const saleIds = new Set(sales.map((sale) => sale.id));
+    return {
+      sales,
+      expenses: raw.expenses.filter((expense) => inDateRange(expense.expense_date, selectedRange.from, selectedRange.to)),
+      saleItems: raw.saleItems.filter((item) => saleIds.has(item.sale_id)),
+      savings: raw.savings.filter((saving) => inDateRange(saving.savings_date, selectedRange.from, selectedRange.to)),
+      investments: raw.investments.filter((investment) => inDateRange(investment.investment_date, selectedRange.from, selectedRange.to)),
+      funding: raw.funding.filter((funding) => inDateRange(funding.date_received, selectedRange.from, selectedRange.to)),
+      restocks: raw.restocks.filter((restock) => inDateRange(restock.restock_date, selectedRange.from, selectedRange.to)),
+      saleDocuments: raw.saleDocuments.filter((document) => inDateRange(document.issued_at, selectedRange.from, selectedRange.to)),
+    };
+  }, [raw, selectedRange.from, selectedRange.to]);
+
+  const previous = useMemo(() => {
+    const sales = raw.sales.filter((sale) => inDateRange(sale.sale_date, previousRange.from, previousRange.to));
+    const saleIds = new Set(sales.map((sale) => sale.id));
+    return {
+      sales,
+      expenses: raw.expenses.filter((expense) => inDateRange(expense.expense_date, previousRange.from, previousRange.to)),
+      saleItems: raw.saleItems.filter((item) => saleIds.has(item.sale_id)),
+      savings: raw.savings.filter((saving) => inDateRange(saving.savings_date, previousRange.from, previousRange.to)),
+      investments: raw.investments.filter((investment) => inDateRange(investment.investment_date, previousRange.from, previousRange.to)),
+      funding: raw.funding.filter((funding) => inDateRange(funding.date_received, previousRange.from, previousRange.to)),
+      restocks: raw.restocks.filter((restock) => inDateRange(restock.restock_date, previousRange.from, previousRange.to)),
+      saleDocuments: raw.saleDocuments.filter((document) => inDateRange(document.issued_at, previousRange.from, previousRange.to)),
+    };
+  }, [previousRange.from, previousRange.to, raw]);
+
+  const activeMetrics = useMemo(
+    () => calcMetrics(filtered.sales, filtered.expenses, raw.products, filtered.saleItems, filtered.savings, filtered.investments, filtered.funding, filtered.restocks, filtered.saleDocuments),
+    [filtered, raw.products],
+  );
+  const previousMetrics = useMemo(
+    () => calcMetrics(previous.sales, previous.expenses, raw.products, previous.saleItems, previous.savings, previous.investments, previous.funding, previous.restocks, previous.saleDocuments),
+    [previous, raw.products],
+  );
+
+  const chartData = useMemo(() => {
+    const start = new Date(`${selectedRange.from}T00:00:00`);
+    const end = new Date(`${selectedRange.to}T00:00:00`);
+    const dayCount = Math.max(1, Math.floor((end.getTime() - start.getTime()) / DAY_MS) + 1);
+    return Array.from({ length: dayCount }, (_, index) => {
+      const date = new Date(start.getTime() + index * DAY_MS);
+      const dayStr = date.toISOString().slice(0, 10);
+      const label = dayCount <= 10
+        ? date.toLocaleDateString('en-GB', { weekday: 'short' })
+        : date.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' });
+      const sales = filtered.sales
+        .filter((sale) => sale.sale_date.slice(0, 10) === dayStr)
+        .reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
+      return { name: label, sales };
+    });
+  }, [filtered.sales, selectedRange.from, selectedRange.to]);
+
+  const recentTransactions = useMemo(
+    () =>
+      buildRecentTransactions({
+        sales: filtered.sales,
+        expenses: filtered.expenses,
+        savings: filtered.savings,
+        investments: filtered.investments,
+        funding: filtered.funding,
+      }),
+    [filtered.expenses, filtered.funding, filtered.investments, filtered.sales, filtered.savings],
+  );
+
+  const greeting = getGreeting(now.getHours());
+  const firstName = getDisplayFirstName(displayName, business?.name || 'there');
 
   return (
     <AppLayout title="Dashboard">
       <QuickTour open={tourOpen} onOpenChange={setTourOpen} businessName={business?.name} />
       <BusinessOnboardingDialog open={!business} onCompleted={() => { void fetchData(); }} />
-      <div className="space-y-5 animate-fade-in">
-        <SubscriptionBanner />
-        <DashboardAdsStrip ads={ads} />
 
-        <section className="rounded-lg border border-border bg-card p-4 sm:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-primary">{filterLabel}</p>
-              <h2 className="mt-1 text-2xl font-bold">{business?.name ?? 'Your business'} dashboard</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Focus on cash, sales, stock, and the next action.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="grid gap-1">
-                <Label htmlFor="dashboard-month" className="text-[10px] uppercase tracking-wider text-muted-foreground">Month</Label>
-                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                  <SelectTrigger id="dashboard-month" className="h-10 w-[160px]">
-                    <SelectValue placeholder="Month" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MONTH_NAMES.map((month, index) => (
-                      <SelectItem key={month} value={String(index)}>
-                        {month}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="dashboard-year" className="text-[10px] uppercase tracking-wider text-muted-foreground">Year</Label>
-                <Select value={selectedYear} onValueChange={setSelectedYear}>
-                  <SelectTrigger id="dashboard-year" className="h-10 w-[120px]">
-                    <SelectValue placeholder="Year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableYears.map((year) => (
-                      <SelectItem key={year} value={String(year)}>
-                        {year}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {!isCurrentMonth && (
-                <Button variant="ghost" size="sm" onClick={() => { setSelectedMonth(String(currentMonth)); setSelectedYear(String(currentYear)); }}>
-                  This month
-                </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={() => setTourOpen(true)} className="hidden sm:inline-flex">
-                <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Tour
+      <div className="space-y-6 animate-fade-in">
+        <SubscriptionBanner />
+
+        <section className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight text-foreground">
+              {greeting}, {firstName}.
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Here&apos;s what&apos;s happening across {business?.name ?? 'your business'} in {selectedRange.label}.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card/75 px-3 py-2 shadow-sm">
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+              <SelectTrigger className="h-9 w-[146px] border-0 bg-transparent px-2 shadow-none">
+                <SelectValue placeholder="Month" />
+              </SelectTrigger>
+              <SelectContent>
+                {MONTH_NAMES.map((month, index) => (
+                  <SelectItem key={month} value={String(index)}>
+                    {month}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={selectedYear} onValueChange={setSelectedYear}>
+              <SelectTrigger className="h-9 w-[98px] border-0 bg-transparent px-2 shadow-none">
+                <SelectValue placeholder="Year" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableYears.map((year) => (
+                  <SelectItem key={year} value={String(year)}>
+                    {year}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!isCurrentMonth ? (
+              <Button variant="ghost" size="sm" onClick={() => { setSelectedMonth(String(currentMonth)); setSelectedYear(String(currentYear)); }}>
+                This month
               </Button>
-            </div>
+            ) : null}
+            <Button variant="outline" size="sm" onClick={() => setTourOpen(true)}>
+              <Sparkles className="mr-1.5 h-3.5 w-3.5" /> Tour
+            </Button>
           </div>
         </section>
 
-        <div className="grid gap-3 md:grid-cols-3">
-          <DashboardStat
-            title="Available cash"
-            value={formatCurrency(overall.availableCash)}
-            detail="All-time business money"
-            icon={Wallet}
-            tone={overall.availableCash < 0 ? 'danger' : 'primary'}
-            large
-          />
-          <DashboardStat
-            title="Today's sales"
-            value={formatCurrency(todayMetrics.todaySales)}
-            detail={`${formatCurrency(todayMetrics.weeklySales)} in the last 7 days`}
-            icon={ShoppingCart}
-          />
-          <DashboardStat
-            title="Stock left"
-            value={String(overall.stockLeft)}
-            detail={overall.lowStockCount > 0 ? `${overall.lowStockCount} low stock item${overall.lowStockCount === 1 ? '' : 's'}` : 'Inventory looks fine'}
-            icon={overall.lowStockCount > 0 ? AlertTriangle : Package}
-            tone={overall.lowStockCount > 0 ? 'warning' : 'neutral'}
-          />
-        </div>
+        <DashboardAdsStrip ads={ads} />
 
-        <section className="grid gap-3 md:grid-cols-4">
-          <DashboardStat
-            title="Month sales"
-            value={formatCurrency(activeMetrics.totalRevenue)}
-            detail={filterLabel}
-            icon={DollarSign}
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <PrimaryMetricCard
+            title="Total Sales"
+            value={activeMetrics.totalRevenue}
+            delta={getMetricDelta(activeMetrics.totalRevenue, previousMetrics.totalRevenue, 'up')}
+            icon={ShoppingCart}
+            iconTone="bg-violet-500/15 text-violet-400"
           />
-          <DashboardStat
-            title="Net profit"
-            value={formatCurrency(activeMetrics.netProfit)}
-            detail={hasFilter ? 'Selected period' : 'All-time after expenses'}
-            icon={activeMetrics.netProfit >= 0 ? TrendingUp : TrendingDown}
-            tone={activeMetrics.netProfit >= 0 ? 'primary' : 'danger'}
+          <PrimaryMetricCard
+            title="Total Expenses"
+            value={activeMetrics.totalExpenses}
+            delta={getMetricDelta(activeMetrics.totalExpenses, previousMetrics.totalExpenses, 'down')}
+            icon={Receipt}
+            iconTone="bg-rose-500/15 text-rose-400"
           />
-          <DashboardStat
-            title="Outstanding"
-            value={formatCurrency(overall.outstandingBalance)}
-            detail="Customer balances"
-            icon={Users}
-            tone={overall.outstandingBalance > 0 ? 'warning' : 'neutral'}
+          <PrimaryMetricCard
+            title="Total Profit"
+            value={activeMetrics.totalProfit}
+            delta={getMetricDelta(activeMetrics.totalProfit, previousMetrics.totalProfit, 'up')}
+            icon={TrendingUp}
+            iconTone="bg-emerald-500/15 text-emerald-400"
           />
-          <DashboardStat
-            title="Expenses"
-            value={formatCurrency(activeMetrics.totalExpenses)}
-            detail={hasFilter ? 'Selected period' : 'All-time spending'}
-            icon={TrendingDown}
-            tone="neutral"
+          <PrimaryMetricCard
+            title="Cash Balance"
+            value={activeMetrics.availableCash}
+            delta={getMetricDelta(activeMetrics.availableCash, previousMetrics.availableCash, 'up')}
+            icon={Wallet}
+            iconTone="bg-blue-500/15 text-blue-400"
           />
         </section>
 
-        <div className="grid gap-5 xl:grid-cols-[1.25fr_0.9fr]">
-          <Card>
+        <section className="grid gap-5 xl:grid-cols-[1.28fr_0.92fr]">
+          <Card className="rounded-2xl">
             <CardHeader className="flex flex-row items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-base">
-                  Sales trend
-                </CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">{filterLabel}</p>
+                <CardTitle className="text-xl">Sales Overview</CardTitle>
+                <p className="mt-1 text-sm text-muted-foreground">{selectedRange.label}</p>
               </div>
               <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1">
                 <Button
@@ -521,11 +680,11 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               {chartData.some((day) => day.sales > 0) ? (
-                <ResponsiveContainer width="100%" height={240}>
+                <ResponsiveContainer width="100%" height={330}>
                   {chartType === 'bar' ? (
                     <BarChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
                       <YAxis tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} />
                       <Tooltip formatter={(value: number) => formatCurrency(value)} />
                       <Bar dataKey="sales" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
@@ -533,7 +692,7 @@ export default function Dashboard() {
                   ) : (
                     <LineChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
                       <YAxis tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} />
                       <Tooltip formatter={(value: number) => formatCurrency(value)} />
                       <Line type="monotone" dataKey="sales" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 5 }} />
@@ -543,102 +702,165 @@ export default function Dashboard() {
               ) : (
                 <EmptyState
                   title="No sales yet"
-                  description={hasFilter ? `No sales recorded for ${filterLabel}.` : 'Record your first sale to see a trend here.'}
+                  description={`No sales were recorded for ${selectedRange.label}.`}
                   action={<Button asChild><Link to="/sales">Record sale</Link></Button>}
                 />
               )}
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="rounded-2xl">
             <CardHeader className="flex flex-row items-start justify-between gap-3">
               <div>
-                <CardTitle className="text-base">Recent transactions</CardTitle>
-                <p className="mt-1 text-xs text-muted-foreground">Latest sales activity.</p>
+                <CardTitle className="text-xl">Recent Transactions</CardTitle>
+                <p className="mt-1 text-sm text-muted-foreground">Latest activity across your key records.</p>
               </div>
               <Button asChild variant="ghost" size="sm">
-                <Link to="/sales">View all <ArrowRight className="ml-1 h-3.5 w-3.5" /></Link>
+                <Link to="/reports">View all <ArrowRight className="ml-1 h-3.5 w-3.5" /></Link>
               </Button>
             </CardHeader>
             <CardContent>
-              {recentSales.length > 0 ? (
+              {recentTransactions.length > 0 ? (
                 <div className="space-y-2">
-                  {recentSales.map((sale) => (
-                    <div key={sale.id} className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{sale.customer_name || 'Walk-in customer'}</p>
-                        <p className="text-xs text-muted-foreground">{new Date(sale.sale_date).toLocaleDateString()}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-3 text-right">
-                        <StatusBadge status={sale.payment_status} />
-                        <span className="text-sm font-semibold">{formatCurrency(Number(sale.total))}</span>
-                      </div>
-                    </div>
+                  {recentTransactions.map((transaction) => (
+                    <RecentTransactionRow key={transaction.id} transaction={transaction} />
                   ))}
                 </div>
               ) : (
                 <EmptyState
                   title="No transactions"
-                  description={hasFilter ? `No transactions for ${filterLabel}.` : 'Recent sales will show up here.'}
+                  description={`No transactions were recorded for ${selectedRange.label}.`}
                 />
               )}
             </CardContent>
           </Card>
-        </div>
+        </section>
 
-        <section className="grid gap-3 md:grid-cols-3">
-          <MiniMetric label="Gross profit" value={formatCurrency(activeMetrics.totalProfit)} />
-          <MiniMetric label="Savings and investments" value={formatCurrency(activeMetrics.totalSavings + activeMetrics.totalInvestments)} />
-          <MiniMetric label="Restock spending" value={formatCurrency(activeMetrics.totalRestockSpending)} />
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SecondaryMetricCard
+            title="Savings"
+            value={activeMetrics.totalSavings}
+            subtitle="Total savings"
+            icon={PiggyBank}
+            iconTone="bg-emerald-500/15 text-emerald-400"
+          />
+          <SecondaryMetricCard
+            title="Investments"
+            value={activeMetrics.totalInvestments}
+            subtitle="Total investments"
+            icon={TrendingUp}
+            iconTone="bg-blue-500/15 text-blue-400"
+          />
+          <SecondaryMetricCard
+            title="Investor Funds"
+            value={activeMetrics.totalFunding}
+            subtitle="Funds received"
+            icon={HandCoins}
+            iconTone="bg-amber-500/15 text-amber-400"
+          />
+          <SecondaryMetricCard
+            title="Stock Left"
+            value={activeMetrics.stockLeft}
+            subtitle={activeMetrics.lowStockCount > 0 ? `${activeMetrics.lowStockCount} low stock item${activeMetrics.lowStockCount === 1 ? '' : 's'}` : `${activeMetrics.totalInvoices} invoices issued`}
+            icon={activeMetrics.lowStockCount > 0 ? AlertTriangle : Package}
+            iconTone={activeMetrics.lowStockCount > 0 ? 'bg-amber-500/15 text-amber-400' : 'bg-violet-500/15 text-violet-400'}
+            isCount
+          />
         </section>
       </div>
     </AppLayout>
   );
 }
 
-function DashboardStat({
+function PrimaryMetricCard({
   title,
   value,
-  detail,
+  delta,
   icon: Icon,
-  tone = 'primary',
-  large = false,
+  iconTone,
 }: {
   title: string;
-  value: string;
-  detail: string;
+  value: number;
+  delta: { state: 'positive' | 'negative' | 'neutral'; label: string; icon: React.ComponentType<{ className?: string }> };
   icon: React.ComponentType<{ className?: string }>;
-  tone?: 'primary' | 'warning' | 'danger' | 'neutral';
-  large?: boolean;
+  iconTone: string;
 }) {
-  const toneClass = {
-    primary: 'bg-primary/10 text-primary',
-    warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-    danger: 'bg-destructive/10 text-destructive',
-    neutral: 'bg-muted text-muted-foreground',
-  }[tone];
+  const DeltaIcon = delta.icon;
+  const deltaTone = delta.state === 'positive'
+    ? 'text-emerald-500'
+    : delta.state === 'negative'
+      ? 'text-destructive'
+      : 'text-muted-foreground';
 
   return (
-    <Card className={cn(large && 'md:col-span-1')}>
-      <CardContent className="flex items-center justify-between gap-4 p-4">
+    <Card className="rounded-2xl">
+      <CardContent className="flex items-start justify-between gap-4 p-5">
         <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">{title}</p>
-          <p className={cn('mt-1 truncate font-bold', large ? 'text-2xl' : 'text-xl')}>{value}</p>
-          <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
+          <p className="text-sm text-muted-foreground">{title}</p>
+          <p className="mt-3 text-3xl font-bold tracking-tight">{formatCurrency(value)}</p>
+          <div className={cn('mt-3 flex items-center gap-1.5 text-sm', deltaTone)}>
+            <DeltaIcon className="h-4 w-4" />
+            <span>{delta.label}</span>
+          </div>
         </div>
-        <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', toneClass)}>
-          <Icon className="h-5 w-5" />
+        <span className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded-full', iconTone)}>
+          <Icon className="h-6 w-6" />
         </span>
       </CardContent>
     </Card>
   );
 }
 
-function MiniMetric({ label, value }: { label: string; value: string }) {
+function SecondaryMetricCard({
+  title,
+  value,
+  subtitle,
+  icon: Icon,
+  iconTone,
+  isCount = false,
+}: {
+  title: string;
+  value: number;
+  subtitle: string;
+  icon: React.ComponentType<{ className?: string }>;
+  iconTone: string;
+  isCount?: boolean;
+}) {
   return (
-    <div className="rounded-lg border border-border bg-muted/30 p-4">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className="mt-1 text-lg font-semibold">{value}</p>
+    <Card className="rounded-2xl">
+      <CardContent className="flex items-start justify-between gap-4 p-5">
+        <div className="min-w-0">
+          <p className="text-sm text-muted-foreground">{title}</p>
+          <p className="mt-3 text-3xl font-bold tracking-tight">{isCount ? value.toLocaleString('en-GH') : formatCurrency(value)}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>
+        </div>
+        <span className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded-full', iconTone)}>
+          <Icon className="h-6 w-6" />
+        </span>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecentTransactionRow({ transaction }: { transaction: RecentTransaction }) {
+  const DirectionIcon = transaction.direction === 'in' ? ArrowUpRight : ArrowDownRight;
+  const amountTone = transaction.direction === 'in' ? 'text-emerald-500' : 'text-destructive';
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl', transaction.toneClass)}>
+          <transaction.icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">{transaction.label}</p>
+          <p className="truncate text-xs text-muted-foreground">{transaction.sublabel}</p>
+        </div>
+      </div>
+      <div className={cn('flex shrink-0 items-center gap-1 text-right text-sm font-semibold', amountTone)}>
+        <span>{formatCurrency(transaction.amount)}</span>
+        <DirectionIcon className="h-4 w-4" />
+      </div>
     </div>
   );
 }

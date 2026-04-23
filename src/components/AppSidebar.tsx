@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Receipt, BarChart3, PiggyBank, Settings, LogOut, Moon, Sun, CreditCard
+  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Receipt, BarChart3, PiggyBank, Settings, LogOut, Moon, Sun, CreditCard, LifeBuoy
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/context/AuthContext';
@@ -20,13 +20,14 @@ const allItems = [
   { title: 'Customers', url: '/customers', icon: Users },
   { title: 'Expenses', url: '/expenses', icon: Receipt },
   { title: 'Reports', url: '/reports', icon: BarChart3 },
+  { title: 'Support', url: '/support', icon: LifeBuoy },
   { title: 'Savings & Invest', url: '/savings', icon: PiggyBank },
   { title: 'Billing', url: '/billing', icon: CreditCard },
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
 
-const staffItems = ['Dashboard', 'Sales Entry', 'Customers'];
-const managerItems = ['Dashboard', 'Sales Entry', 'Products', 'Inventory', 'Customers', 'Expenses', 'Reports'];
+const staffItems = ['Dashboard', 'Sales Entry', 'Customers', 'Support'];
+const managerItems = ['Dashboard', 'Sales Entry', 'Products', 'Inventory', 'Customers', 'Expenses', 'Reports', 'Support'];
 
 export function AppSidebar() {
   const { state } = useSidebar();

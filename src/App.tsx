@@ -18,6 +18,7 @@ import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SavingsInvestmentsPage from "./pages/SavingsInvestmentsPage";
 import BillingPage from "./pages/BillingPage";
+import SupportPage from "./pages/SupportPage";
 import PlatformLayout from "./pages/platform/PlatformLayout";
 import PlatformDashboard from "./pages/platform/PlatformDashboard";
 import BusinessesPage from "./pages/platform/BusinessesPage";
@@ -26,6 +27,7 @@ import PaymentsPage from "./pages/platform/PaymentsPage";
 import PaymentMethodsPage from "./pages/platform/PaymentMethodsPage";
 import AnnouncementsPage from "./pages/platform/AnnouncementsPage";
 import AdsPage from "./pages/platform/AdsPage";
+import PlatformSupportPage from "./pages/platform/PlatformSupportPage";
 import NotFound from "./pages/NotFound";
 import { BrandLoader } from "./components/BrandLoader";
 
@@ -107,6 +109,7 @@ const App = () => (
                   <Route path="payments" element={<PaymentsPage />} />
                   <Route path="payment-methods" element={<PaymentMethodsPage />} />
                   <Route path="ads" element={<AdsPage />} />
+                  <Route path="support" element={<PlatformSupportPage />} />
                   <Route path="announcements" element={<AnnouncementsPage />} />
                 </Route>
 
@@ -119,6 +122,7 @@ const App = () => (
                 <Route path="/customers" element={<ProtectedRoute><CustomersPage /></ProtectedRoute>} />
                 <Route path="/expenses" element={<ProtectedRoute minRole="manager"><ExpensesPage /></ProtectedRoute>} />
                 <Route path="/reports" element={<ProtectedRoute minRole="manager"><ReportsPage /></ProtectedRoute>} />
+                <Route path="/support" element={<ProtectedRoute allowReadOnly allowOnboarding><SupportPage /></ProtectedRoute>} />
                 <Route path="/savings" element={<ProtectedRoute adminOnly><SavingsInvestmentsPage /></ProtectedRoute>} />
                 <Route path="/settings" element={<ProtectedRoute adminOnly allowReadOnly><SettingsPage /></ProtectedRoute>} />
                 <Route path="/billing" element={<ProtectedRoute adminOnly allowReadOnly><BillingPage /></ProtectedRoute>} />

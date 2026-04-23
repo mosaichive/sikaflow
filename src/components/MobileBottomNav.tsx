@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Home, ShoppingCart, Boxes, Receipt, MoreHorizontal, Users, BarChart3, PiggyBank, CreditCard, Settings, LogOut, Moon, Sun, X } from 'lucide-react';
+import { Home, ShoppingCart, Boxes, Receipt, MoreHorizontal, Users, BarChart3, PiggyBank, CreditCard, Settings, LogOut, Moon, Sun, X, LifeBuoy } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/hooks/useTheme';
@@ -16,6 +16,7 @@ const PRIMARY = [
 const MORE_ITEMS = [
   { to: '/customers', label: 'Customers', icon: Users },
   { to: '/reports', label: 'Reports', icon: BarChart3, minRole: 'manager' as const },
+  { to: '/support', label: 'Support', icon: LifeBuoy },
   { to: '/savings', label: 'Savings & Investments', icon: PiggyBank, adminOnly: true },
   { to: '/billing', label: 'Billing', icon: CreditCard, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },

@@ -1,4 +1,5 @@
-import { ExternalLink } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -12,63 +13,97 @@ export type DashboardAd = {
 };
 
 export function DashboardAdsStrip({ ads }: { ads: DashboardAd[] }) {
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [paused, setPaused] = useState(false);
+  const duplicated = useMemo(() => (ads.length > 1 ? [...ads, ...ads] : ads), [ads]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || ads.length <= 1) return;
+
+    let frame = 0;
+    const step = () => {
+      if (!paused) {
+        viewport.scrollLeft += 0.35;
+        const resetPoint = viewport.scrollWidth / 2;
+        if (viewport.scrollLeft >= resetPoint) viewport.scrollLeft -= resetPoint;
+      }
+      frame = window.requestAnimationFrame(step);
+    };
+
+    frame = window.requestAnimationFrame(step);
+    return () => window.cancelAnimationFrame(frame);
+  }, [ads.length, paused]);
+
   if (ads.length === 0) return null;
 
-  const repeated = ads.length > 1 ? [...ads, ...ads] : [...ads, ...ads, ...ads];
-  const animationDuration = Math.max(20, ads.length * 9);
+  const scrollByAmount = (direction: -1 | 1) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollBy({ left: direction * 240, behavior: 'smooth' });
+  };
 
   return (
-    <section className="rounded-lg border border-border bg-card/70 p-3 sm:p-4">
-      <style>{`
-        @keyframes dashboard-ads-ltr {
-          0% { transform: translateX(calc(-50% - 0.75rem)); }
-          100% { transform: translateX(0); }
-        }
-      `}</style>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-primary">Highlights</p>
-          <p className="mt-1 text-sm text-muted-foreground">Platform updates, partner offers, and featured business tools.</p>
+    <section className="rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
+      <div className="flex items-center gap-3">
+        <div className="shrink-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-primary/80">Highlights</p>
         </div>
-      </div>
 
-      <div className="overflow-hidden">
         <div
-          className="flex w-max items-stretch gap-3 will-change-transform"
-          style={{ animation: `dashboard-ads-ltr ${animationDuration}s linear infinite` }}
+          className="min-w-0 flex-1 overflow-hidden"
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
         >
-          {repeated.map((ad, index) => {
-            const href = ad.cta_url?.trim() || undefined;
-            const external = href ? /^https?:\/\//i.test(href) : false;
+          <div
+            ref={viewportRef}
+            className="flex gap-2 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            {duplicated.map((ad, index) => {
+              const href = ad.cta_url?.trim();
+              const isExternal = href ? /^https?:\/\//i.test(href) : false;
 
-            return (
-              <article
-                key={`${ad.id}-${index}`}
-                className={cn(
-                  'flex min-h-[108px] w-[292px] shrink-0 items-center gap-3 rounded-lg border border-border bg-background/80 p-3 sm:w-[360px]',
-                  'md:w-[400px]',
-                )}
-              >
-                <img
-                  src={ad.image_url}
-                  alt={ad.title}
-                  className="h-20 w-20 shrink-0 rounded-md object-cover sm:h-24 sm:w-24"
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-foreground">{ad.title}</p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{ad.description}</p>
+              return (
+                <article
+                  key={`${ad.id}-${index}`}
+                  className={cn(
+                    'flex h-[72px] w-[220px] shrink-0 items-center gap-2 rounded-lg border border-border/60 bg-background/70 px-2.5 py-2 shadow-none',
+                    'sm:w-[250px] md:w-[270px]',
+                  )}
+                >
+                  <img
+                    src={ad.image_url}
+                    alt={ad.title}
+                    loading="lazy"
+                    className="h-9 w-9 shrink-0 rounded-md object-cover"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium text-foreground">{ad.title}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{ad.description}</p>
+                  </div>
                   {href ? (
-                    <Button asChild size="sm" variant="outline" className="mt-3 h-8 px-3">
-                      <a href={href} target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>
-                        {ad.cta_text?.trim() || 'Open'} {external && <ExternalLink className="ml-1.5 h-3.5 w-3.5" />}
+                    <Button asChild variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground">
+                      <a href={href} target={isExternal ? '_blank' : undefined} rel={isExternal ? 'noreferrer' : undefined} aria-label={ad.cta_text?.trim() || ad.title}>
+                        <ExternalLink className="h-3.5 w-3.5" />
                       </a>
                     </Button>
                   ) : null}
-                </div>
-              </article>
-            );
-          })}
+                </article>
+              );
+            })}
+          </div>
         </div>
+
+        {ads.length > 1 ? (
+          <div className="hidden items-center gap-1 sm:flex">
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => scrollByAmount(-1)}>
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => scrollByAmount(1)}>
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ) : null}
       </div>
     </section>
   );
