@@ -30,6 +30,7 @@ import { useBusiness } from '@/context/BusinessContext';
 import { useSubscription } from '@/context/SubscriptionContext';
 import { toast } from 'sonner';
 import { QuickTour } from '@/components/QuickTour';
+import { cn } from '@/lib/utils';
 
 const DAY_MS = 86400000;
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
