@@ -84,7 +84,7 @@ RETURNS text
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-AS $$
+AS $function$
 DECLARE
   _next bigint;
   _prefix text;
@@ -99,9 +99,9 @@ BEGIN
     RAISE EXCEPTION 'Unsupported sale document type: %', _kind;
   END IF;
 
-  RETURN format('%s-%s-%s', _prefix, to_char(now(), 'YYYYMM'), lpad(_next::text, 5, '0'));
+  RETURN _prefix || '-' || to_char(now(), 'YYYYMM') || '-' || lpad(_next::text, 5, '0');
 END;
-$$;
+$function$;
 
 CREATE TABLE IF NOT EXISTS public.sale_documents (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -140,7 +140,7 @@ RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
-AS $$
+AS $function$
 DECLARE
   _sale record;
 BEGIN
@@ -187,7 +187,7 @@ BEGIN
 
   RETURN NEW;
 END;
-$$;
+$function$;
 
 ALTER TABLE public.sale_documents ENABLE ROW LEVEL SECURITY;
 
