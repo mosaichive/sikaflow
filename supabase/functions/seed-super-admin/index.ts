@@ -36,6 +36,7 @@ Deno.serve(async (req) => {
       const meta = (existing.user_metadata ?? {}) as Record<string, unknown>;
       await admin.auth.admin.updateUserById(userId, {
         email: SUPER_ADMIN_EMAIL,
+        email_confirm: true,
         password: INITIAL_PASSWORD,
         user_metadata: { ...meta, must_change_password: true, is_super_admin: true, display_name: "Platform Admin" },
       });
