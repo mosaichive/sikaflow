@@ -1,7 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { Provider } from '@supabase/supabase-js';
-import { Apple, Chrome, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { Logo } from '@/components/Logo';
 import { supabase } from '@/integrations/supabase/client';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -12,17 +11,6 @@ import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
 type AuthMode = 'sign-in' | 'sign-up';
-
-function mapOAuthError(message: string) {
-  const normalized = message.toLowerCase();
-  if (normalized.includes('provider is not enabled')) {
-    return 'This sign-in method is not enabled in Supabase yet. Turn on the provider and add the Vercel callback URL.';
-  }
-  if (normalized.includes('redirect') && normalized.includes('url')) {
-    return 'The OAuth callback URL is not allowed yet. Add your Vercel URL to Supabase Auth redirect URLs and try again.';
-  }
-  return message;
-}
 
 function AuthShell({ children }: { children: ReactNode }) {
   return (
@@ -70,7 +58,6 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [oauthProvider, setOauthProvider] = useState<Provider | null>(null);
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
@@ -147,28 +134,6 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
     }
   };
 
-  const continueWithOAuth = async (provider: Provider) => {
-    setError('');
-    setOauthProvider(provider);
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        redirectTo,
-        scopes: provider === 'apple' ? 'name email' : undefined,
-        queryParams: provider === 'google'
-          ? {
-              access_type: 'offline',
-              prompt: 'select_account',
-            }
-          : undefined,
-      },
-    });
-    if (oauthError) {
-      setError(mapOAuthError(oauthError.message));
-      setOauthProvider(null);
-    }
-  };
-
   return (
     <>
       <div className="mb-5">
@@ -208,29 +173,6 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
         </button>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="gap-2"
-          onClick={() => void continueWithOAuth('google')}
-          disabled={submitting || !!oauthProvider}
-        >
-          {oauthProvider === 'google' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Chrome className="h-4 w-4" />}
-          Continue with Google
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="gap-2"
-          onClick={() => void continueWithOAuth('apple')}
-          disabled={submitting || !!oauthProvider}
-        >
-          {oauthProvider === 'apple' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Apple className="h-4 w-4" />}
-          Continue with Apple
-        </Button>
-      </div>
-
       {location.search.includes('reason=removed') && (
         <Alert className="mt-4">
           <AlertDescription>
@@ -238,12 +180,6 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
           </AlertDescription>
         </Alert>
       )}
-
-      <div className="my-5 flex items-center gap-3">
-        <span className="h-px flex-1 bg-border" />
-        <span className="text-xs text-muted-foreground">or use email</span>
-        <span className="h-px flex-1 bg-border" />
-      </div>
 
       <form className="space-y-4" onSubmit={submit}>
         {mode === 'sign-up' && (
@@ -290,7 +226,7 @@ function AuthPanel({ initialMode }: { initialMode: AuthMode }) {
           </Alert>
         )}
 
-        <Button type="submit" className="w-full" disabled={submitting || !!oauthProvider}>
+        <Button type="submit" className="w-full" disabled={submitting}>
           {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {mode === 'sign-in' ? 'Sign in' : 'Create account'}
         </Button>
