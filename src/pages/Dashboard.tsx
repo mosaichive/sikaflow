@@ -599,10 +599,10 @@ export default function Dashboard() {
       }),
     [filtered.expenses, filtered.funding, filtered.investments, filtered.sales, filtered.savings],
   );
-  const periodLength = Math.max(1, Math.floor((new Date(`${selectedRange.to}T00:00:00`).getTime() - new Date(`${selectedRange.from}T00:00:00`).getTime()) / DAY_MS) + 1);
-  const previousPeriodLength = Math.max(1, Math.floor((new Date(`${previousRange.to}T00:00:00`).getTime() - new Date(`${previousRange.from}T00:00:00`).getTime()) / DAY_MS) + 1);
-  const dailySalesValue = activeMetrics.totalRevenue / periodLength;
-  const previousDailySalesValue = previousMetrics.totalRevenue / previousPeriodLength;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const dailySalesValue = getDailySalesValue(raw.sales, now);
+  const previousDailySalesValue = getDailySalesValue(raw.sales, yesterday);
 
   const greeting = getGreeting(now.getHours());
   const firstName = getDisplayFirstName(displayName, business?.name || 'there');
@@ -692,8 +692,8 @@ export default function Dashboard() {
                   dailySalesValue,
                   previousDailySalesValue,
                   'up',
-                  monthFilterActive ? 'vs last month' : 'vs last year',
-                  'New in this period',
+                  'vs yesterday',
+                  'New today',
                 )}
               />
             }
