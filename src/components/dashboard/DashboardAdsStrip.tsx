@@ -44,10 +44,10 @@ export function DashboardAdsStrip({ ads }: { ads: DashboardAd[] }) {
   };
 
   return (
-    <section className="rounded-xl border border-border/60 bg-muted/10 px-3 py-2">
-      <div className="flex items-center gap-3">
+    <section className="rounded-lg border border-border/50 bg-muted/5 px-2.5 py-1.5">
+      <div className="flex items-center gap-2">
         <div className="shrink-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-primary/80">Highlights</p>
+          <p className="text-[9px] font-medium uppercase tracking-[0.2em] text-primary/70">Highlights</p>
         </div>
 
         <div
@@ -57,7 +57,7 @@ export function DashboardAdsStrip({ ads }: { ads: DashboardAd[] }) {
         >
           <div
             ref={viewportRef}
-            className="flex gap-2 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="flex gap-1.5 overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
             {duplicated.map((ad, index) => {
               const href = ad.cta_url?.trim();
@@ -67,24 +67,24 @@ export function DashboardAdsStrip({ ads }: { ads: DashboardAd[] }) {
                 <article
                   key={`${ad.id}-${index}`}
                   className={cn(
-                    'flex h-[72px] w-[220px] shrink-0 items-center gap-2 rounded-lg border border-border/60 bg-background/70 px-2.5 py-2 shadow-none',
-                    'sm:w-[250px] md:w-[270px]',
+                    'flex h-[56px] w-[190px] shrink-0 items-center gap-2 rounded-md border border-border/45 bg-background/55 px-2 py-1.5 shadow-none',
+                    'sm:w-[220px] md:w-[238px]',
                   )}
                 >
                   <img
                     src={ad.image_url}
                     alt={ad.title}
                     loading="lazy"
-                    className="h-9 w-9 shrink-0 rounded-md object-cover"
+                    className="h-7 w-7 shrink-0 rounded object-cover opacity-90"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-medium text-foreground">{ad.title}</p>
-                    <p className="truncate text-[11px] text-muted-foreground">{ad.description}</p>
+                    <p className="truncate text-[11px] font-medium text-foreground/90">{ad.title}</p>
+                    <p className="truncate text-[10px] text-muted-foreground">{ad.description}</p>
                   </div>
                   {href ? (
-                    <Button asChild variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground">
+                    <Button asChild variant="ghost" size="icon" className="h-6 w-6 shrink-0 text-muted-foreground/80 hover:text-foreground">
                       <a href={href} target={isExternal ? '_blank' : undefined} rel={isExternal ? 'noreferrer' : undefined} aria-label={ad.cta_text?.trim() || ad.title}>
-                        <ExternalLink className="h-3.5 w-3.5" />
+                        <ExternalLink className="h-3 w-3" />
                       </a>
                     </Button>
                   ) : null}
@@ -95,12 +95,12 @@ export function DashboardAdsStrip({ ads }: { ads: DashboardAd[] }) {
         </div>
 
         {ads.length > 1 ? (
-          <div className="hidden items-center gap-1 sm:flex">
-            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => scrollByAmount(-1)}>
-              <ChevronLeft className="h-3.5 w-3.5" />
+          <div className="hidden items-center gap-0.5 md:flex">
+            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground/80" onClick={() => scrollByAmount(-1)}>
+              <ChevronLeft className="h-3 w-3" />
             </Button>
-            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => scrollByAmount(1)}>
-              <ChevronRight className="h-3.5 w-3.5" />
+            <Button type="button" variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground/80" onClick={() => scrollByAmount(1)}>
+              <ChevronRight className="h-3 w-3" />
             </Button>
           </div>
         ) : null}
