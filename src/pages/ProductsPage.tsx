@@ -195,7 +195,12 @@ export default function ProductsPage() {
                 </Table>
               </div>
             ) : (
-              <EmptyState icon={<Package className="h-7 w-7 text-muted-foreground" />} title="No products yet" description="Add your first product to get started." />
+              <EmptyState
+                icon={<Package className="h-7 w-7 text-muted-foreground" />}
+                title="Add your first product to start selling"
+                description="Your inventory is empty right now. Add the first product so it can appear on the dashboard and be ready for sale."
+                action={isAdmin ? <Button onClick={openAdd}><Plus className="mr-2 h-4 w-4" /> Add Product</Button> : undefined}
+              />
             )}
           </CardContent>
         </Card>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
-import { formatCurrency } from '@/lib/constants';
+import { formatCurrency, OTHER_INCOME_CATEGORIES, PAYMENT_METHODS } from '@/lib/constants';
 import { supabase } from '@/integrations/supabase/client';
 import { useBusiness } from '@/context/BusinessContext';
 import { useAuth } from '@/context/AuthContext';
@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
@@ -18,10 +20,12 @@ import {
   Download,
   FileText,
   HandCoins,
+  Link2,
   LineChart as LineChartIcon,
   PackagePlus,
   PiggyBank,
   TrendingUp,
+  Trash2,
 } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import {
@@ -39,10 +43,13 @@ type RawReportData = {
   investments: any[];
   funding: any[];
   restocks: any[];
+  otherIncome: any[];
 };
 
 type PeriodStats = {
   revenue: number;
+  otherIncome: number;
+  totalIncome: number;
   cost: number;
   grossProfit: number;
   expenses: number;
@@ -61,6 +68,8 @@ const PRESET_OPTIONS: Array<{ value: Exclude<ReportRangePreset, 'custom'>; label
   { value: 'year', label: 'This Year' },
 ];
 
+const PAYMENT_METHOD_LABELS = Object.fromEntries(PAYMENT_METHODS.map((method) => [method.value, method.label])) as Record<string, string>;
+
 function inDateRange(value: string | null | undefined, from: string, to: string) {
   if (!value) return false;
   const timestamp = new Date(value).getTime();
@@ -73,12 +82,15 @@ function computePeriodStats({
   sales,
   saleItems,
   expenses,
+  otherIncome,
   savings,
   investments,
   funding,
   restocks,
 }: Omit<RawReportData, 'saleItems'> & { saleItems: any[] }): PeriodStats {
   const revenue = sales.reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
+  const totalOtherIncome = otherIncome.reduce((sum, record) => sum + Number(record.amount ?? 0), 0);
+  const totalIncome = revenue + totalOtherIncome;
   const cost = saleItems.reduce((sum, item) => sum + Number(item.cost_price ?? 0) * Number(item.quantity ?? 0), 0);
   const grossProfit = revenue - cost;
   const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
@@ -89,22 +101,24 @@ function computePeriodStats({
 
   return {
     revenue,
+    otherIncome: totalOtherIncome,
+    totalIncome,
     cost,
     grossProfit,
     expenses: totalExpenses,
-    netProfit: grossProfit - totalExpenses,
+    netProfit: grossProfit + totalOtherIncome - totalExpenses,
     savings: totalSavings,
     investments: totalInvestments,
     funding: totalFunding,
     restockSpending: totalRestocks,
-    availableCash: revenue + totalFunding - totalExpenses - totalSavings - totalInvestments - totalRestocks,
+    availableCash: totalIncome - totalExpenses,
   };
 }
 
 export default function ReportsPage() {
   const defaultRange = getPresetRange('month');
-  const { business } = useBusiness();
-  const { displayName, user } = useAuth();
+  const { business, businessId } = useBusiness();
+  const { displayName, user, isAdmin, isManager } = useAuth();
   const { toast } = useToast();
   const [preset, setPreset] = useState<ReportRangePreset>('month');
   const [dateFrom, setDateFrom] = useState(defaultRange.from);
@@ -117,14 +131,28 @@ export default function ReportsPage() {
     investments: [],
     funding: [],
     restocks: [],
+    otherIncome: [],
   });
   const [loading, setLoading] = useState(true);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [salesChartType, setSalesChartType] = useState<'bar' | 'line'>('bar');
+  const [incomeSaving, setIncomeSaving] = useState(false);
+  const [openingAttachment, setOpeningAttachment] = useState<string | null>(null);
+  const [deletingIncomeId, setDeletingIncomeId] = useState<string | null>(null);
+  const [incomeForm, setIncomeForm] = useState({
+    category: OTHER_INCOME_CATEGORIES[0],
+    amount: '',
+    income_date: new Date().toISOString().slice(0, 10),
+    payment_method: PAYMENT_METHODS[0].value,
+    description: '',
+  });
+  const [incomeAttachment, setIncomeAttachment] = useState<File | null>(null);
+  const [incomeAttachmentKey, setIncomeAttachmentKey] = useState(0);
+  const canManageOtherIncome = isAdmin || isManager;
 
   const fetchReport = useCallback(async () => {
     setLoading(true);
-    const [salesRes, itemsRes, expRes, savRes, invRes, funRes, restockRes] = await Promise.all([
+    const [salesRes, itemsRes, expRes, savRes, invRes, funRes, restockRes, otherIncomeRes] = await Promise.all([
       supabase.from('sales').select('*').order('sale_date', { ascending: false }),
       supabase.from('sale_items').select('*'),
       supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
@@ -132,6 +160,7 @@ export default function ReportsPage() {
       supabase.from('investments').select('*').order('investment_date', { ascending: false }),
       supabase.from('investor_funding').select('*').order('date_received', { ascending: false }),
       supabase.from('restocks').select('*').order('restock_date', { ascending: false }),
+      supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
     ]);
 
     setRaw({
@@ -142,6 +171,7 @@ export default function ReportsPage() {
       investments: invRes.data ?? [],
       funding: funRes.data ?? [],
       restocks: restockRes.data ?? [],
+      otherIncome: otherIncomeRes.data ?? [],
     });
     setLoading(false);
   }, []);
@@ -160,6 +190,7 @@ export default function ReportsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => { void fetchReport(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, () => { void fetchReport(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, () => { void fetchReport(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, () => { void fetchReport(); })
       .subscribe();
 
     return () => {
@@ -175,6 +206,7 @@ export default function ReportsPage() {
         sales: [],
         saleItems: [],
         expenses: [],
+        otherIncome: [],
         savings: [],
         investments: [],
         funding: [],
@@ -189,6 +221,7 @@ export default function ReportsPage() {
       sales,
       saleItems: raw.saleItems.filter((item) => saleIds.has(item.sale_id)),
       expenses: raw.expenses.filter((expense) => inDateRange(expense.expense_date, dateFrom, dateTo)),
+      otherIncome: raw.otherIncome.filter((entry) => inDateRange(entry.income_date, dateFrom, dateTo)),
       savings: raw.savings.filter((saving) => inDateRange(saving.savings_date, dateFrom, dateTo)),
       investments: raw.investments.filter((investment) => inDateRange(investment.investment_date, dateFrom, dateTo)),
       funding: raw.funding.filter((entry) => inDateRange(entry.date_received, dateFrom, dateTo)),
@@ -217,6 +250,7 @@ export default function ReportsPage() {
       buildReportStatement({
         sales: raw.sales,
         expenses: raw.expenses,
+        otherIncome: raw.otherIncome,
         savings: raw.savings,
         investments: raw.investments,
         fundings: raw.funding,
@@ -287,6 +321,164 @@ export default function ReportsPage() {
     }
   };
 
+  const handleIncomeAttachmentChange = (file: File | null) => {
+    if (!file) {
+      setIncomeAttachment(null);
+      return;
+    }
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!validTypes.includes(file.type)) {
+      toast({
+        title: 'Unsupported attachment',
+        description: 'Upload a JPG, PNG, WEBP, or PDF receipt.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: 'Attachment too large',
+        description: 'Keep attachments under 5MB.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIncomeAttachment(file);
+  };
+
+  const uploadIncomeAttachment = async () => {
+    if (!incomeAttachment || !businessId || !user) return null;
+    const sanitizedName = incomeAttachment.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+    const path = `${businessId}/${user.id}/${Date.now()}-${sanitizedName}`;
+    const { error } = await supabase.storage
+      .from('other-income-receipts')
+      .upload(path, incomeAttachment, { upsert: true });
+
+    if (error) throw error;
+    return { path, name: incomeAttachment.name };
+  };
+
+  const resetIncomeForm = () => {
+    setIncomeForm({
+      category: OTHER_INCOME_CATEGORIES[0],
+      amount: '',
+      income_date: new Date().toISOString().slice(0, 10),
+      payment_method: PAYMENT_METHODS[0].value,
+      description: '',
+    });
+    setIncomeAttachment(null);
+    setIncomeAttachmentKey((value) => value + 1);
+  };
+
+  const handleSaveOtherIncome = async () => {
+    if (!canManageOtherIncome || !businessId || !user) return;
+
+    const amount = Number(incomeForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast({
+        title: 'Invalid amount',
+        description: 'Enter an amount greater than zero.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (incomeForm.description.trim().length > 240) {
+      toast({
+        title: 'Description too long',
+        description: 'Keep the description under 240 characters.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIncomeSaving(true);
+    try {
+      const attachment = await uploadIncomeAttachment();
+      const { error } = await supabase.from('other_income' as any).insert({
+        business_id: businessId,
+        category: incomeForm.category,
+        amount,
+        income_date: incomeForm.income_date,
+        payment_method: incomeForm.payment_method,
+        description: incomeForm.description.trim(),
+        attachment_path: attachment?.path ?? null,
+        attachment_name: attachment?.name ?? null,
+        recorded_by: user.id,
+        recorded_by_name: displayName || user.email || 'Team member',
+      });
+
+      if (error) throw error;
+
+      resetIncomeForm();
+      toast({
+        title: 'Other income saved',
+        description: 'The entry now counts toward income and available business money.',
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Could not save other income',
+        description: error?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIncomeSaving(false);
+    }
+  };
+
+  const handleOpenAttachment = async (entry: any) => {
+    if (!entry?.attachment_path) return;
+    setOpeningAttachment(entry.id);
+    try {
+      const { data, error } = await supabase.storage
+        .from('other-income-receipts')
+        .createSignedUrl(entry.attachment_path, 60);
+
+      if (error) throw error;
+      if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    } catch (error: any) {
+      toast({
+        title: 'Could not open attachment',
+        description: error?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setOpeningAttachment(null);
+    }
+  };
+
+  const handleDeleteOtherIncome = async (entry: any) => {
+    if (!canManageOtherIncome) return;
+    const confirmed = window.confirm('Delete this other income record?');
+    if (!confirmed) return;
+
+    setDeletingIncomeId(entry.id);
+    try {
+      if (entry.attachment_path) {
+        await supabase.storage.from('other-income-receipts').remove([entry.attachment_path]);
+      }
+
+      const { error } = await supabase.from('other_income' as any).delete().eq('id', entry.id);
+      if (error) throw error;
+
+      toast({
+        title: 'Other income deleted',
+        description: 'The entry has been removed.',
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Could not delete entry',
+        description: error?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingIncomeId(null);
+    }
+  };
+
   return (
     <AppLayout title="Reports">
       <div className="space-y-6 animate-fade-in">
@@ -342,7 +534,7 @@ export default function ReportsPage() {
                 Report Slip PDF
               </CardTitle>
               <p className="mt-2 text-sm text-muted-foreground">
-                Combined statement for sales, expenses, savings, investments, investor funds, and stock restocks.
+                Combined statement for sales, other income, expenses, savings, investments, investor funds, and stock restocks.
               </p>
             </div>
             <Button onClick={() => void handleDownloadSlip()} disabled={invalidRange || statement.rows.length === 0 || pdfLoading}>
@@ -416,9 +608,11 @@ export default function ReportsPage() {
 
         <div>
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Financial Summary (Selected Range)</p>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-8">
             {[
-              { label: 'Sales Revenue', value: stats.revenue, sub: 'Money in' },
+              { label: 'Sales Income', value: stats.revenue, sub: 'POS and order sales only' },
+              { label: 'Other Income', value: stats.otherIncome, sub: 'Service, delivery, commission, and more' },
+              { label: 'Total Income', value: stats.totalIncome, sub: 'Sales income + other income' },
               { label: 'Investor Funding', value: stats.funding, sub: 'External inflow' },
               { label: 'Expenses', value: stats.expenses, sub: 'Money out' },
               { label: 'Savings', value: stats.savings, sub: 'Cash moved to savings' },
@@ -448,14 +642,14 @@ export default function ReportsPage() {
             <CardContent className="p-4 text-center">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Net Profit</p>
               <p className={`mt-1 text-lg font-bold ${stats.netProfit < 0 ? 'text-destructive' : ''}`}>{formatCurrency(stats.netProfit)}</p>
-              <p className="text-[9px] text-muted-foreground">Gross profit minus expenses</p>
+              <p className="text-[9px] text-muted-foreground">Sales profit + other income minus expenses</p>
             </CardContent>
           </Card>
           <Card className="border-primary/30 bg-primary/5">
             <CardContent className="p-4 text-center">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Available Cash</p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Available Business Money</p>
               <p className={`mt-1 text-lg font-bold ${stats.availableCash < 0 ? 'text-destructive' : 'text-primary'}`}>{formatCurrency(stats.availableCash)}</p>
-              <p className="text-[9px] text-muted-foreground">After expenses, savings, investments, and restocks</p>
+              <p className="text-[9px] text-muted-foreground">Total income minus expenses</p>
             </CardContent>
           </Card>
         </div>
@@ -463,6 +657,7 @@ export default function ReportsPage() {
         <Tabs defaultValue="sales">
           <TabsList className="flex h-auto flex-wrap">
             <TabsTrigger value="sales">Sales</TabsTrigger>
+            <TabsTrigger value="other-income">Other Income</TabsTrigger>
             <TabsTrigger value="restocks">Restocks</TabsTrigger>
             <TabsTrigger value="savings">Savings</TabsTrigger>
             <TabsTrigger value="investments">Investments</TabsTrigger>
@@ -524,6 +719,193 @@ export default function ReportsPage() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="other-income" className="space-y-4">
+            <Card>
+              <CardContent className="p-4 text-center">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total Other Income</p>
+                <p className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(stats.otherIncome)}</p>
+                <p className="text-[9px] text-muted-foreground">Extra business income that is not tied to product sales</p>
+              </CardContent>
+            </Card>
+
+            {canManageOtherIncome ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Add Other Income</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Use this for service income, delivery fees, commission, discount recovery, or other business income.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="space-y-2">
+                      <Label htmlFor="other-income-category">Category</Label>
+                      <Select value={incomeForm.category} onValueChange={(value) => setIncomeForm((current) => ({ ...current, category: value }))}>
+                        <SelectTrigger id="other-income-category">
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {OTHER_INCOME_CATEGORIES.map((category) => (
+                            <SelectItem key={category} value={category}>
+                              {category}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="other-income-amount">Amount</Label>
+                      <Input
+                        id="other-income-amount"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={incomeForm.amount}
+                        onChange={(event) => setIncomeForm((current) => ({ ...current, amount: event.target.value }))}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="other-income-date">Date</Label>
+                      <Input
+                        id="other-income-date"
+                        type="date"
+                        value={incomeForm.income_date}
+                        onChange={(event) => setIncomeForm((current) => ({ ...current, income_date: event.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="other-income-method">Payment Method</Label>
+                      <Select value={incomeForm.payment_method} onValueChange={(value) => setIncomeForm((current) => ({ ...current, payment_method: value }))}>
+                        <SelectTrigger id="other-income-method">
+                          <SelectValue placeholder="Select payment method" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAYMENT_METHODS.map((method) => (
+                            <SelectItem key={method.value} value={method.value}>
+                              {method.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="other-income-attachment">Attachment / Receipt</Label>
+                      <Input
+                        key={incomeAttachmentKey}
+                        id="other-income-attachment"
+                        type="file"
+                        accept=".jpg,.jpeg,.png,.webp,.pdf"
+                        onChange={(event) => handleIncomeAttachmentChange(event.target.files?.[0] ?? null)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="other-income-description">Description</Label>
+                    <Textarea
+                      id="other-income-description"
+                      value={incomeForm.description}
+                      onChange={(event) => setIncomeForm((current) => ({ ...current, description: event.target.value }))}
+                      placeholder="Add context for this income entry"
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      {incomeAttachment ? `Attachment ready: ${incomeAttachment.name}` : 'Optional: attach a receipt or proof of payment.'}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" onClick={resetIncomeForm} disabled={incomeSaving}>
+                        Clear
+                      </Button>
+                      <Button type="button" onClick={() => void handleSaveOtherIncome()} disabled={incomeSaving}>
+                        {incomeSaving ? 'Saving...' : 'Save Other Income'}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {filtered.otherIncome.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Other Income Entries</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Payment Method</TableHead>
+                        <TableHead>Description</TableHead>
+                        <TableHead>Attachment</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        {canManageOtherIncome ? <TableHead className="text-right">Actions</TableHead> : null}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.otherIncome.map((entry) => (
+                        <TableRow key={entry.id}>
+                          <TableCell className="text-xs">{new Date(`${entry.income_date}T00:00:00`).toLocaleDateString('en-GH')}</TableCell>
+                          <TableCell className="font-medium">{entry.category}</TableCell>
+                          <TableCell>{PAYMENT_METHOD_LABELS[entry.payment_method] || entry.payment_method || '—'}</TableCell>
+                          <TableCell className="max-w-[280px] whitespace-normal text-muted-foreground">
+                            {entry.description || '—'}
+                          </TableCell>
+                          <TableCell>
+                            {entry.attachment_path ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 gap-1.5 px-2"
+                                onClick={() => void handleOpenAttachment(entry)}
+                                disabled={openingAttachment === entry.id}
+                              >
+                                <Link2 className="h-3.5 w-3.5" />
+                                {openingAttachment === entry.id ? 'Opening...' : entry.attachment_name || 'Open'}
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(Number(entry.amount ?? 0))}
+                          </TableCell>
+                          {canManageOtherIncome ? (
+                            <TableCell className="text-right">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2 text-destructive"
+                                onClick={() => void handleDeleteOtherIncome(entry)}
+                                disabled={deletingIncomeId === entry.id}
+                              >
+                                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                {deletingIncomeId === entry.id ? 'Deleting...' : 'Delete'}
+                              </Button>
+                            </TableCell>
+                          ) : null}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            ) : (
+              <EmptyState
+                icon={<HandCoins className="h-7 w-7 text-muted-foreground" />}
+                title="No other income in this period"
+                description="Record delivery fees, service income, commission, or other non-sales income here."
+              />
+            )}
           </TabsContent>
 
           <TabsContent value="restocks" className="space-y-4">

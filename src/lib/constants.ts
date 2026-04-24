@@ -13,6 +13,14 @@ export const PAYMENT_METHODS = [
   { value: 'bank_transfer', label: 'Bank Transfer' },
 ] as const;
 
+export const OTHER_INCOME_CATEGORIES = [
+  'Service Income',
+  'Delivery Fee Income',
+  'Commission',
+  'Discount Recovery',
+  'Miscellaneous Business Income',
+] as const;
+
 export const PAYMENT_STATUSES = [
   { value: 'paid', label: 'Paid', color: 'bg-success text-success-foreground' },
   { value: 'partial', label: 'Partial', color: 'bg-warning text-warning-foreground' },

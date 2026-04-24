@@ -18,6 +18,7 @@ export type ReportStatementRow = {
 
 export type ReportStatementSummary = {
   totalSales: number;
+  totalOtherIncome: number;
   totalExpenses: number;
   totalSavings: number;
   totalInvestments: number;
@@ -29,6 +30,7 @@ export type ReportStatementSummary = {
 type ReportSourceArgs = {
   sales: any[];
   expenses: any[];
+  otherIncome: any[];
   savings: any[];
   investments: any[];
   fundings: any[];
@@ -119,6 +121,7 @@ function asTimestamp(value: string | null | undefined) {
 function orderedTransactions({
   sales,
   expenses,
+  otherIncome,
   savings,
   investments,
   fundings,
@@ -145,6 +148,19 @@ function orderedTransactions({
       description: [expense.category, expense.description].filter(Boolean).join(' • ') || 'Expense',
       moneyIn: 0,
       moneyOut: Number(expense.amount ?? 0),
+    })),
+    ...otherIncome.map((entry) => ({
+      date: entry.income_date,
+      timestamp: asTimestamp(entry.income_date),
+      reference: transactionRef('OTH', entry.reference, entry.id),
+      type: 'Other Income',
+      description: [
+        entry.category,
+        entry.description,
+        entry.payment_method ? String(entry.payment_method).replaceAll('_', ' ') : '',
+      ].filter(Boolean).join(' • ') || 'Other income',
+      moneyIn: Number(entry.amount ?? 0),
+      moneyOut: 0,
     })),
     ...savings.map((saving) => ({
       date: saving.savings_date,
@@ -190,6 +206,7 @@ function orderedTransactions({
 export function buildReportStatement({
   sales,
   expenses,
+  otherIncome,
   savings,
   investments,
   fundings,
@@ -197,7 +214,7 @@ export function buildReportStatement({
   from,
   to,
 }: ReportSourceArgs) {
-  const ordered = orderedTransactions({ sales, expenses, savings, investments, fundings, restocks });
+  const ordered = orderedTransactions({ sales, expenses, otherIncome, savings, investments, fundings, restocks });
   const fromMs = startOfDayMs(from);
   const toMs = endOfDayMs(to);
   const inRange = (value: string | null | undefined) => {
@@ -226,6 +243,7 @@ export function buildReportStatement({
     });
 
   const totalSales = sales.filter((sale) => inRange(sale.sale_date)).reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
+  const totalOtherIncome = otherIncome.filter((entry) => inRange(entry.income_date)).reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0);
   const totalExpenses = expenses.filter((expense) => inRange(expense.expense_date)).reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
   const totalSavings = savings.filter((saving) => inRange(saving.savings_date)).reduce((sum, saving) => sum + Number(saving.amount ?? 0), 0);
   const totalInvestments = investments.filter((investment) => inRange(investment.investment_date)).reduce((sum, investment) => sum + Number(investment.amount ?? 0), 0);
@@ -244,12 +262,13 @@ export function buildReportStatement({
     totalMoneyOut,
     summary: {
       totalSales,
+      totalOtherIncome,
       totalExpenses,
       totalSavings,
       totalInvestments,
       totalInvestorFunds,
       totalRestocks,
-      netPosition: totalSales + totalInvestorFunds - totalExpenses - totalSavings - totalInvestments - totalRestocks,
+      netPosition: totalSales + totalOtherIncome + totalInvestorFunds - totalExpenses - totalSavings - totalInvestments - totalRestocks,
     } satisfies ReportStatementSummary,
   };
 }
@@ -562,9 +581,10 @@ export async function downloadReportSlipPdf({
     margin: { left: 40, right: 40 },
     theme: 'grid',
     body: [
-      ['Total Sales', formatCurrency(summary.totalSales), 'Total Expenses', formatCurrency(summary.totalExpenses)],
-      ['Total Savings', formatCurrency(summary.totalSavings), 'Total Investments', formatCurrency(summary.totalInvestments)],
-      ['Total Investor Funds', formatCurrency(summary.totalInvestorFunds), 'Net Position', formatCurrency(summary.netPosition)],
+      ['Total Sales', formatCurrency(summary.totalSales), 'Other Income', formatCurrency(summary.totalOtherIncome)],
+      ['Total Expenses', formatCurrency(summary.totalExpenses), 'Total Savings', formatCurrency(summary.totalSavings)],
+      ['Total Investments', formatCurrency(summary.totalInvestments), 'Total Investor Funds', formatCurrency(summary.totalInvestorFunds)],
+      ['Total Restocks', formatCurrency(summary.totalRestocks), 'Net Position', formatCurrency(summary.netPosition)],
     ],
     styles: {
       font: 'NotoSans',
@@ -587,7 +607,7 @@ export async function downloadReportSlipPdf({
   doc.setFontSize(8.5);
   doc.setTextColor(...COLORS.muted);
   doc.text(
-    `Net position reflects total sales and investor funds against expenses, savings, investments, and ${formatCurrency(summary.totalRestocks)} in restock spending.`,
+    `Net position reflects sales income, other income, and investor funds against expenses, savings, investments, and ${formatCurrency(summary.totalRestocks)} in restock spending.`,
     40,
     noteY,
     { maxWidth: pageWidth - 80 },
