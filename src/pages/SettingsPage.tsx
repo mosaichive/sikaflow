@@ -17,7 +17,7 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Plus, Pencil, Trash2, Landmark, RotateCcw, AlertTriangle, Shield, Users, Key, Camera, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, Landmark, RotateCcw, AlertTriangle, Shield, Users, Key, Camera, X, Building2 } from 'lucide-react';
 import { ImageCropper } from '@/components/ImageCropper';
 import { ReferralProgramCard } from '@/components/settings/ReferralProgramCard';
 import { useToast } from '@/hooks/use-toast';
@@ -69,11 +69,12 @@ const roleBadgeVariant = (role: string) => {
 
 export default function SettingsPage() {
   const { user, role, displayName, avatarUrl, profileTitle, profilePhone, profileBio, isAdmin, refreshProfile } = useAuth();
-  const { business, businessId } = useBusiness();
+  const { business, businessId, refresh: refreshBusiness } = useBusiness();
   const { isDark, toggle } = useTheme();
   const { toast } = useToast();
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const businessLogoInputRef = useRef<HTMLInputElement>(null);
 
   const businessName = business?.name || 'Your Business';
   const resetConfirmText = useMemo(() => `RESET ${businessName.toUpperCase()}`, [businessName]);
@@ -88,6 +89,9 @@ export default function SettingsPage() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [cropperOpen, setCropperOpen] = useState(false);
   const [cropperSrc, setCropperSrc] = useState<string>('');
+  const [businessLogoPreview, setBusinessLogoPreview] = useState<string | null>(null);
+  const [businessLogoFile, setBusinessLogoFile] = useState<File | null>(null);
+  const [businessLogoUploading, setBusinessLogoUploading] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [passwordSaving, setPasswordSaving] = useState(false);
 
@@ -268,6 +272,67 @@ export default function SettingsPage() {
 
     setNewPassword('');
     toast({ title: 'Password updated' });
+  };
+
+  const handleBusinessLogoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      toast({ title: 'Invalid logo format', description: 'Use JPG, PNG, or WEBP.', variant: 'destructive' });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: 'Logo too large', description: 'Maximum file size is 5MB.', variant: 'destructive' });
+      return;
+    }
+    setBusinessLogoFile(file);
+    setBusinessLogoPreview(URL.createObjectURL(file));
+    if (businessLogoInputRef.current) businessLogoInputRef.current.value = '';
+  };
+
+  const handleBusinessLogoUpload = async () => {
+    if (!businessLogoFile || !businessId) return;
+    setBusinessLogoUploading(true);
+    try {
+      const ext = businessLogoFile.name.split('.').pop() || 'png';
+      const path = `${businessId}/primary-logo.${ext}`;
+      const { error: uploadError } = await supabase.storage.from('business-logos').upload(path, businessLogoFile, { upsert: true });
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from('business-logos').getPublicUrl(path);
+      const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
+      const { error: updateError } = await supabase
+        .from('businesses' as any)
+        .update({ logo_light_url: publicUrl, logo_dark_url: publicUrl })
+        .eq('id', businessId);
+      if (updateError) throw updateError;
+
+      setBusinessLogoFile(null);
+      setBusinessLogoPreview(null);
+      await refreshBusiness();
+      toast({ title: 'Business logo updated' });
+    } catch (error: any) {
+      toast({ title: 'Could not update logo', description: error.message || 'Something went wrong', variant: 'destructive' });
+    } finally {
+      setBusinessLogoUploading(false);
+    }
+  };
+
+  const handleRemoveBusinessLogo = async () => {
+    if (!businessId) return;
+    const { error } = await supabase
+      .from('businesses' as any)
+      .update({ logo_light_url: null, logo_dark_url: null })
+      .eq('id', businessId);
+    if (error) {
+      toast({ title: 'Could not remove logo', description: error.message, variant: 'destructive' });
+      return;
+    }
+    setBusinessLogoFile(null);
+    setBusinessLogoPreview(null);
+    await refreshBusiness();
+    toast({ title: 'Business logo removed' });
   };
 
   // ---- User Management (per-business, server-enforced) ----
@@ -558,9 +623,61 @@ export default function SettingsPage() {
 
         <Card>
           <CardHeader><CardTitle className="text-base">Store</CardTitle></CardHeader>
-          <CardContent className="space-y-3 text-sm">
+          <CardContent className="space-y-5 text-sm">
             <div className="flex justify-between"><span className="text-muted-foreground">Store Name</span><span className="font-medium">{businessName}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Currency</span><span className="font-medium">GH₵ (Ghana Cedi)</span></div>
+            <div className="rounded-xl border border-border bg-muted/20 p-4">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-background">
+                    {(businessLogoPreview || business?.logo_light_url) ? (
+                      <img
+                        src={businessLogoPreview || business?.logo_light_url || ''}
+                        alt={`${businessName} logo`}
+                        className="h-full w-full object-contain"
+                      />
+                    ) : (
+                      <Building2 className="h-6 w-6 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="font-medium">Invoice & receipt logo</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      This logo will appear on invoices and receipts.
+                    </p>
+                    {!isAdmin ? (
+                      <p className="mt-1 text-[11px] text-muted-foreground">Only admins can change business branding.</p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <input
+                    ref={businessLogoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png,image/webp"
+                    onChange={handleBusinessLogoSelect}
+                    className="hidden"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => businessLogoInputRef.current?.click()} disabled={!isAdmin}>
+                      <Camera className="mr-1 h-3.5 w-3.5" />
+                      {(businessLogoPreview || business?.logo_light_url) ? 'Change Logo' : 'Upload Logo'}
+                    </Button>
+                    {businessLogoPreview ? (
+                      <Button size="sm" onClick={handleBusinessLogoUpload} disabled={businessLogoUploading || !isAdmin}>
+                        {businessLogoUploading ? 'Saving...' : 'Save Logo'}
+                      </Button>
+                    ) : null}
+                    {business?.logo_light_url && !businessLogoPreview ? (
+                      <Button size="sm" variant="ghost" onClick={handleRemoveBusinessLogo} disabled={!isAdmin}>
+                        Remove
+                      </Button>
+                    ) : null}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Use PNG, JPG, or WEBP. Square logos work best.</p>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
 

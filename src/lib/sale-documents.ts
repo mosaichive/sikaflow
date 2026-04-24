@@ -16,6 +16,7 @@ export type SaleDocumentItem = {
 export type SaleDocumentSnapshot = {
   business: {
     name: string;
+    logo_url?: string | null;
     email?: string | null;
     phone?: string | null;
     location?: string | null;
@@ -61,6 +62,8 @@ export type SaleDocumentRecord = {
 
 type BusinessLike = {
   name?: string | null;
+  logo_light_url?: string | null;
+  logo_dark_url?: string | null;
   email?: string | null;
   phone?: string | null;
   location?: string | null;
@@ -129,6 +132,7 @@ export function buildSaleDocumentSnapshot({
   return {
     business: {
       name: stringValue(business?.name, 'SikaFlow Business'),
+      logo_url: business?.logo_light_url ?? business?.logo_dark_url ?? null,
       email: business?.email ?? null,
       phone: business?.phone ?? null,
       location: business?.location ?? null,
@@ -167,6 +171,7 @@ export function normalizeSaleDocument(row: any): SaleDocumentRecord {
   const normalizedSnapshot: SaleDocumentSnapshot = {
     business: {
       name: stringValue(snapshot.business?.name, 'SikaFlow Business'),
+      logo_url: snapshot.business?.logo_url ?? null,
       email: snapshot.business?.email ?? null,
       phone: snapshot.business?.phone ?? null,
       location: snapshot.business?.location ?? null,
@@ -236,6 +241,30 @@ function paymentMethodLabel(value?: string | null) {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function documentAmountSummary(document: SaleDocumentRecord) {
+  const subtotal = formatCurrency(document.amount_ghs);
+  const amountPaid = formatCurrency(document.amount_paid_ghs);
+  const balance = formatCurrency(document.balance_ghs);
+
+  if (document.kind === 'receipt') {
+    return {
+      subtotal,
+      emphasisLabel: 'Amount Paid',
+      emphasisValue: amountPaid,
+      secondaryLabel: 'Payment Status',
+      secondaryValue: salePaymentLabel(document.payment_status),
+    };
+  }
+
+  return {
+    subtotal,
+    emphasisLabel: document.payment_status === 'paid' ? 'Amount Paid' : 'Balance Due',
+    emphasisValue: document.payment_status === 'paid' ? amountPaid : balance,
+    secondaryLabel: 'Amount Paid',
+    secondaryValue: amountPaid,
+  };
+}
+
 export function renderSaleDocumentHtml(document: SaleDocumentRecord) {
   const { snapshot } = document;
   const title = saleDocumentLabel(document.kind);
@@ -251,18 +280,17 @@ export function renderSaleDocumentHtml(document: SaleDocumentRecord) {
     hour: '2-digit',
     minute: '2-digit',
   });
-
-  const rows = snapshot.items.map((item) => `
+  const amountSummary = documentAmountSummary(document);
+  const descriptionRows = snapshot.items.map((item) => `
     <tr>
-      <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;">
-        <div style="font-weight:600;">${escapeHtml(item.product_name)}</div>
-        <div style="font-size:12px;color:#6b7280;">
-          ${[item.sku, item.size, item.color].filter(Boolean).map((part) => escapeHtml(String(part))).join(' • ') || '&nbsp;'}
+      <td style="padding:18px 18px 16px;border-bottom:1px solid #dbe1ea;vertical-align:top;">
+        <div style="font-size:16px;font-weight:700;color:#0f172a;line-height:1.35;">${escapeHtml(item.product_name)}</div>
+        <div style="margin-top:6px;font-size:13px;color:#64748b;line-height:1.5;">
+          Qty ${item.quantity} × ${escapeHtml(formatCurrency(item.unit_price))}
+          ${[item.sku, item.size, item.color].filter(Boolean).length ? `<br />${[item.sku, item.size, item.color].filter(Boolean).map((part) => escapeHtml(String(part))).join(' • ')}` : ''}
         </div>
       </td>
-      <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${item.quantity}</td>
-      <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;text-align:right;">${escapeHtml(formatCurrency(item.unit_price))}</td>
-      <td style="padding:12px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:600;">${escapeHtml(formatCurrency(item.line_total))}</td>
+      <td style="padding:18px 18px 16px;border-bottom:1px solid #dbe1ea;vertical-align:top;text-align:right;font-size:16px;font-weight:700;color:#0f172a;white-space:nowrap;">${escapeHtml(formatCurrency(item.line_total))}</td>
     </tr>
   `).join('');
 
@@ -273,102 +301,130 @@ export function renderSaleDocumentHtml(document: SaleDocumentRecord) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>${escapeHtml(title)} ${escapeHtml(document.document_number)}</title>
     <style>
-      body { font-family: Inter, Arial, sans-serif; margin: 0; padding: 32px; color: #111827; background: #ffffff; }
-      .sheet { max-width: 860px; margin: 0 auto; }
-      .eyebrow { color: #9f1239; font-size: 12px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
-      .heading { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-top: 14px; margin-bottom: 28px; }
-      .title { font-size: 34px; line-height: 1.05; font-weight: 800; margin: 0; }
-      .meta-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
-      .panel { border:1px solid #e5e7eb; border-radius: 18px; padding: 18px; }
-      .panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; margin:0 0 10px; }
-      .line { margin: 4px 0; font-size: 14px; }
-      .summary { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0 24px; }
-      .metric { border:1px solid #e5e7eb; border-radius: 16px; padding: 14px 16px; }
-      .metric .label { color:#6b7280; font-size:12px; margin-bottom:6px; }
-      .metric .value { font-size: 18px; font-weight: 700; }
-      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-      thead th { text-align:left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #6b7280; padding: 0 10px 10px; }
-      .status { display:inline-flex; align-items:center; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: rgba(159, 18, 57, 0.08); color: ${paymentTone(document.payment_status)}; }
-      .footer { margin-top: 30px; padding-top: 18px; border-top:1px solid #e5e7eb; color:#6b7280; font-size: 12px; display:flex; justify-content:space-between; gap:16px; }
+      * { box-sizing: border-box; }
+      body { font-family: Inter, Arial, sans-serif; margin: 0; padding: 32px; color: #0f172a; background: #f8fafc; }
+      .sheet { max-width: 760px; margin: 0 auto; background: #ffffff; border: 1px solid #dbe1ea; border-radius: 18px; overflow: hidden; }
+      .inner { padding: 34px 42px 30px; }
+      .heading { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; }
+      .brand { display:flex; gap:18px; align-items:flex-start; }
+      .logo-box { width: 86px; height: 86px; border: 1px solid #dbe1ea; border-radius: 10px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#fff; }
+      .logo-box img { width: 100%; height: 100%; object-fit: contain; }
+      .logo-placeholder { font-size: 12px; color: #94a3b8; text-align:center; padding: 10px; line-height: 1.35; }
+      .brand-name { font-size: 18px; font-weight: 800; line-height: 1.35; margin: 0; }
+      .brand-lines { margin-top: 12px; font-size: 15px; line-height: 1.5; color:#111827; }
+      .doc-title { font-size: 34px; line-height: 1.05; font-weight: 900; margin: 2px 0 10px; letter-spacing: 0.01em; text-transform: uppercase; }
+      .doc-number { font-size: 14px; color:#475569; word-break: break-all; }
+      .to-block { margin-top: 28px; }
+      .label { font-size: 15px; color:#64748b; margin-bottom: 6px; }
+      .to-lines { font-size: 15px; line-height: 1.45; font-weight: 700; color:#111827; }
+      .rule { border-top: 2px solid #111827; margin: 26px 0 0; }
+      .meta-row { display:grid; grid-template-columns: 1fr auto; gap: 28px; padding: 18px 0 16px; align-items:start; }
+      .meta-title { font-size: 14px; color:#64748b; margin-bottom: 6px; }
+      .meta-value { font-size: 16px; font-weight: 700; color:#0f172a; }
+      table { width: 100%; border-collapse: collapse; margin-top: 0; }
+      thead th { background:#cbd5e1; color:#ffffff; font-size: 13px; font-weight: 700; letter-spacing: 0.02em; padding: 16px 18px; text-align:left; }
+      thead th:last-child { text-align:right; }
+      .totals { padding: 18px 0 0; }
+      .summary-line { display:flex; justify-content:space-between; gap:16px; padding: 14px 0; border-top: 1px solid #111827; font-size: 15px; }
+      .summary-line strong { font-size: 15px; }
+      .summary-line.emphasis { border-top: 0; padding-top: 18px; font-size: 18px; font-weight: 800; }
+      .summary-line.emphasis strong { font-size: 18px; }
+      .summary-line.secondary { color:#475569; border-top: 0; padding-top: 6px; }
+      .notes { margin-top: 20px; border-top: 1px solid #dbe1ea; padding-top: 16px; }
+      .notes-text { font-size: 14px; color:#334155; line-height: 1.7; }
+      .footer { display:flex; justify-content:space-between; gap:16px; padding-top: 18px; margin-top: 22px; border-top: 1px solid #dbe1ea; color:#64748b; font-size: 12px; }
       @media print {
-        body { padding: 0; }
-        .sheet { max-width: none; }
+        body { padding: 0; background:#fff; }
+        .sheet { max-width: none; border-radius: 0; border: 0; }
       }
-      @media (max-width: 720px) {
-        body { padding: 18px; }
-        .heading, .footer { flex-direction: column; }
-        .meta-grid, .summary { grid-template-columns: 1fr; }
+      @media (max-width: 760px) {
+        body { padding: 16px; }
+        .inner { padding: 24px 20px; }
+        .heading, .brand, .footer { flex-direction: column; }
+        .meta-row { grid-template-columns: 1fr; }
+        .doc-title { font-size: 28px; }
+        .logo-box { width: 74px; height: 74px; }
       }
     </style>
   </head>
   <body>
     <div class="sheet">
-      <div class="eyebrow">${escapeHtml(title)}</div>
-      <div class="heading">
-        <div>
-          <h1 class="title">${escapeHtml(snapshot.business.name)}</h1>
-          <div class="line">${escapeHtml(title)} No. ${escapeHtml(document.document_number)}</div>
+      <div class="inner">
+        <div class="heading">
+          <div class="brand">
+            <div class="logo-box">
+              ${snapshot.business.logo_url ? `<img src="${escapeHtml(snapshot.business.logo_url)}" alt="${escapeHtml(snapshot.business.name)} logo" />` : `<div class="logo-placeholder">Add logo in profile</div>`}
+            </div>
+            <div>
+              <p class="brand-name">${escapeHtml(snapshot.business.name)}</p>
+              <div class="brand-lines">
+                ${snapshot.business.location ? `${escapeHtml(snapshot.business.location)}<br />` : ''}
+                ${snapshot.business.phone ? `${escapeHtml(snapshot.business.phone)}<br />` : ''}
+                ${snapshot.business.email ? `${escapeHtml(snapshot.business.email)}` : ''}
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="doc-title">${escapeHtml(title)}</div>
+            <div class="doc-number">${escapeHtml(document.document_number)}</div>
+          </div>
         </div>
-        <div style="text-align:right;">
-          <div class="line"><strong>Sale date:</strong> ${escapeHtml(saleDate)}</div>
-          <div class="line"><strong>Issued:</strong> ${escapeHtml(issuedAt)}</div>
-          <div class="line"><span class="status">${escapeHtml(salePaymentLabel(document.payment_status))}</span></div>
-        </div>
-      </div>
 
-      <div class="meta-grid">
-        <div class="panel">
-          <h3>Business</h3>
-          <div class="line">${escapeHtml(snapshot.business.name)}</div>
-          ${snapshot.business.email ? `<div class="line">${escapeHtml(snapshot.business.email)}</div>` : ''}
-          ${snapshot.business.phone ? `<div class="line">${escapeHtml(snapshot.business.phone)}</div>` : ''}
-          ${snapshot.business.location ? `<div class="line">${escapeHtml(snapshot.business.location)}</div>` : ''}
+        <div class="to-block">
+          <div class="label">To:</div>
+          <div class="to-lines">
+            ${escapeHtml(snapshot.customer.name)}<br />
+            ${snapshot.customer.phone ? `${escapeHtml(snapshot.customer.phone)}<br />` : ''}
+            ${snapshot.seller.name ? `Served by ${escapeHtml(snapshot.seller.name)}` : ''}
+          </div>
         </div>
-        <div class="panel">
-          <h3>Customer</h3>
-          <div class="line">${escapeHtml(snapshot.customer.name)}</div>
-          ${snapshot.customer.phone ? `<div class="line">${escapeHtml(snapshot.customer.phone)}</div>` : ''}
-          <div class="line"><strong>Seller:</strong> ${escapeHtml(snapshot.seller.name)}</div>
-          ${snapshot.seller.email ? `<div class="line">${escapeHtml(snapshot.seller.email)}</div>` : ''}
-        </div>
-      </div>
 
-      <div class="summary">
-        <div class="metric">
-          <div class="label">Total</div>
-          <div class="value">${escapeHtml(formatCurrency(snapshot.sale.amount_ghs))}</div>
-        </div>
-        <div class="metric">
-          <div class="label">Amount paid</div>
-          <div class="value">${escapeHtml(formatCurrency(snapshot.sale.amount_paid_ghs))}</div>
-        </div>
-        <div class="metric">
-          <div class="label">Balance</div>
-          <div class="value">${escapeHtml(formatCurrency(snapshot.sale.balance_ghs))}</div>
-        </div>
-        <div class="metric">
-          <div class="label">Payment method</div>
-          <div class="value" style="font-size:15px;">${escapeHtml(paymentMethodLabel(snapshot.sale.payment_method))}</div>
-        </div>
-      </div>
+        <div class="rule"></div>
 
-      <table>
-        <thead>
-          <tr>
-            <th>Product / Service</th>
-            <th style="text-align:center;">Qty</th>
-            <th style="text-align:right;">Unit price</th>
-            <th style="text-align:right;">Line total</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+        <div class="meta-row">
+          <div>
+            <div class="meta-title">Payment Method</div>
+            <div class="meta-value">${escapeHtml(paymentMethodLabel(snapshot.sale.payment_method))}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="meta-title">Date • Time</div>
+            <div class="meta-value">${escapeHtml(issuedAt)}</div>
+          </div>
+        </div>
 
-      ${snapshot.sale.notes ? `<div class="panel" style="margin-top:24px;"><h3>Notes</h3><div class="line">${escapeHtml(snapshot.sale.notes)}</div></div>` : ''}
+        <table>
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody>${descriptionRows}</tbody>
+        </table>
 
-      <div class="footer">
-        <div>SikaFlow business document</div>
-        <div>${escapeHtml(title)} ${escapeHtml(document.document_number)}</div>
+        <div class="totals">
+          <div class="summary-line">
+            <span>Subtotal</span>
+            <strong>${escapeHtml(amountSummary.subtotal)}</strong>
+          </div>
+          ${document.kind === 'invoice' ? `
+            <div class="summary-line secondary">
+              <span>${escapeHtml(amountSummary.secondaryLabel)}</span>
+              <strong>${escapeHtml(amountSummary.secondaryValue)}</strong>
+            </div>
+          ` : ''}
+          <div class="summary-line emphasis">
+            <span>${escapeHtml(amountSummary.emphasisLabel)}</span>
+            <strong>${escapeHtml(amountSummary.emphasisValue)}</strong>
+          </div>
+        </div>
+
+        ${snapshot.sale.notes ? `<div class="notes"><div class="label">Notes</div><div class="notes-text">${escapeHtml(snapshot.sale.notes)}</div></div>` : ''}
+
+        <div class="footer">
+          <div>${escapeHtml(title)} ${escapeHtml(document.document_number)}</div>
+          <div>Sale date: ${escapeHtml(saleDate)}</div>
+        </div>
       </div>
     </div>
   </body>
