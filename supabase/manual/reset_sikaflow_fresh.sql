@@ -4,14 +4,8 @@
 
 BEGIN;
 
-DELETE FROM storage.objects
-WHERE bucket_id IN (
-  'product-images',
-  'business-logos',
-  'platform-ads',
-  'other-income-receipts',
-  'expense-receipts'
-);
+-- Supabase blocks direct SQL deletion from storage.objects in SQL Editor.
+-- Clear bucket files separately from the Storage UI/API if you want the files gone too.
 
 TRUNCATE TABLE
   public.business_announcement_reads,
@@ -25,6 +19,9 @@ TRUNCATE TABLE
   public.subscriptions,
   public.platform_announcements,
   public.platform_ads,
+  public.platform_support_settings,
+  public.referrals,
+  public.referral_accounts,
   public.support_messages,
   public.other_income,
   public.restocks,
@@ -44,6 +41,10 @@ TRUNCATE TABLE
   public.profiles,
   public.businesses
 RESTART IDENTITY CASCADE;
+
+INSERT INTO public.platform_support_settings (singleton_key)
+VALUES ('default')
+ON CONFLICT (singleton_key) DO NOTHING;
 
 DELETE FROM auth.identities;
 DELETE FROM auth.sessions;
