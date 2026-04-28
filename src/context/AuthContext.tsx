@@ -3,7 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 import { clearPendingReferralToken, getOrCreateReferralDeviceId, getPendingReferralToken } from '@/lib/referrals';
 
-type AppRole = 'admin' | 'manager' | 'staff' | 'super_admin';
+export type AppRole = 'admin' | 'manager' | 'staff' | 'super_admin' | 'salesperson' | 'distributor';
 
 interface ProfileData {
   display_name: string;
@@ -41,6 +41,8 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>;
   isAdmin: boolean;
   isManager: boolean;
+  isSalesperson: boolean;
+  isDistributor: boolean;
 }
 
 const emptyProfile: ProfileData = {
@@ -224,6 +226,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile: async () => { await fetchProfile(); },
       isAdmin: role === 'admin' || role === 'super_admin',
       isManager: role === 'manager',
+      isSalesperson: role === 'salesperson',
+      isDistributor: role === 'distributor',
     }}>
       {children}
     </AuthContext.Provider>

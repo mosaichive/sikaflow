@@ -1,194 +1,339 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
-import { formatCurrency } from '@/lib/constants';
-import { supabase } from '@/integrations/supabase/client';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { useToast } from '@/hooks/use-toast';
-import { Plus, Package, Search, Pencil, Trash2 } from 'lucide-react';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { supabase } from '@/integrations/supabase/client';
+import { formatCurrency } from '@/lib/constants';
+import { Package, Plus, Search, Pencil, Trash2, ArchiveRestore, Archive } from 'lucide-react';
 
-const emptyForm = {
-  name: '', sku: '', category: '', brand: '', sizes: '',
-  colors: '', cost_price: 0, selling_price: 0,
-  reorder_level: 5, supplier: '', barcode: '', note: '',
+type ProductRow = {
+  id: string;
+  name: string;
+  sku: string;
+  category: string;
+  quantity: number;
+  cost_price: number | string;
+  selling_price: number | string;
+  low_stock_threshold?: number | null;
+  reorder_level?: number | null;
+  image_url?: string | null;
+  is_archived?: boolean | null;
 };
 
+const emptyForm = {
+  name: '',
+  category: '',
+  sku: '',
+  cost_price: '0',
+  selling_price: '0',
+  quantity: '0',
+  low_stock_threshold: '3',
+};
+
+function generateSku(name: string) {
+  const base = name.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase() || 'ITEM';
+  return `${base}-${Math.floor(1000 + Math.random() * 9000)}`;
+}
+
 export default function ProductsPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isManager, user, displayName } = useAuth();
   const { businessId } = useBusiness();
   const { toast } = useToast();
-  const [products, setProducts] = useState<any[]>([]);
+  const [rows, setRows] = useState<ProductRow[]>([]);
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<ProductRow | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [form, setForm] = useState(emptyForm);
 
+  const canManage = isAdmin || isManager;
+
+  const load = useCallback(async () => {
+    const query = supabase.from('products').select('*').order('name');
+    const { data } = showArchived ? await query : await query.eq('is_archived', false);
+    setRows((data || []) as ProductRow[]);
+  }, [showArchived]);
+
   useEffect(() => {
-    fetchProducts();
-    const ch = supabase.channel('products-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, fetchProducts)
+    void load();
+    const channel = supabase
+      .channel('products-management')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => { void load(); })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, []);
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [load]);
 
-  const fetchProducts = async () => {
-    const { data } = await supabase.from('products').select('*').order('name');
-    setProducts(data || []);
-  };
+  const filteredRows = useMemo(
+    () =>
+      rows.filter((row) =>
+        [row.name, row.sku, row.category]
+          .join(' ')
+          .toLowerCase()
+          .includes(search.toLowerCase()),
+      ),
+    [rows, search],
+  );
 
-  const openAdd = () => {
-    setEditingId(null);
+  const openCreate = () => {
+    setEditing(null);
+    setImageFile(null);
     setForm(emptyForm);
     setOpen(true);
   };
 
-  const openEdit = (p: any) => {
-    setEditingId(p.id);
+  const openEdit = (row: ProductRow) => {
+    setEditing(row);
+    setImageFile(null);
     setForm({
-      name: p.name, sku: p.sku, category: p.category || '',
-      brand: p.brand || '', sizes: (p.sizes || []).join(', '),
-      colors: (p.colors || []).join(', '), cost_price: Number(p.cost_price),
-      selling_price: Number(p.selling_price),
-      reorder_level: p.reorder_level, supplier: p.supplier || '',
-      barcode: p.barcode || '', note: '',
+      name: row.name,
+      category: row.category || '',
+      sku: row.sku,
+      cost_price: String(row.cost_price ?? 0),
+      selling_price: String(row.selling_price ?? 0),
+      quantity: String(row.quantity ?? 0),
+      low_stock_threshold: String(row.low_stock_threshold ?? row.reorder_level ?? 3),
     });
     setOpen(true);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    const payload = {
-      name: form.name, sku: form.sku, category: form.category, brand: form.brand,
-      sizes: form.sizes.split(',').map(s => s.trim()).filter(Boolean),
-      colors: form.colors.split(',').map(s => s.trim()).filter(Boolean),
-      cost_price: form.cost_price, selling_price: form.selling_price,
-      reorder_level: form.reorder_level,
-      supplier: form.supplier, barcode: form.barcode,
-    };
+  const uploadProductImage = async (productId: string, file: File) => {
+    if (!businessId) return '';
+    const ext = file.name.split('.').pop() || 'png';
+    const path = `${businessId}/${productId}-${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('product-images').upload(path, file, { upsert: true });
+    if (error) throw error;
+    const { data } = supabase.storage.from('product-images').getPublicUrl(path);
+    return data.publicUrl;
+  };
+
+  const saveProduct = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!businessId || !user || !canManage) return;
+    setSaving(true);
+
     try {
-      if (editingId) {
-        const { error } = await supabase.from('products').update(payload).eq('id', editingId);
+      const quantity = Math.max(0, Number(form.quantity || 0));
+      const lowStockThreshold = Math.max(0, Number(form.low_stock_threshold || 0));
+      const payload = {
+        business_id: businessId,
+        name: form.name.trim(),
+        category: form.category.trim(),
+        sku: form.sku.trim() || generateSku(form.name),
+        cost_price: Number(form.cost_price || 0),
+        selling_price: Number(form.selling_price || 0),
+        quantity,
+        reorder_level: lowStockThreshold,
+        low_stock_threshold: lowStockThreshold,
+        is_archived: false,
+      };
+
+      if (editing) {
+        const { error } = await supabase.from('products').update(payload as never).eq('id', editing.id);
         if (error) throw error;
-        toast({ title: 'Product updated!' });
+
+        if (imageFile) {
+          const imageUrl = await uploadProductImage(editing.id, imageFile);
+          await supabase.from('products').update({ image_url: imageUrl } as never).eq('id', editing.id);
+        }
+
+        toast({ title: 'Product updated' });
       } else {
-        if (!businessId) throw new Error('No business selected');
-        const { error } = await supabase.from('products').insert({ ...payload, quantity: 0, business_id: businessId });
+        const { data: created, error } = await supabase.from('products').insert(payload as never).select('id').single();
         if (error) throw error;
-        toast({ title: 'Product added!', description: 'Go to Inventory to restock this product.' });
+
+        if (imageFile) {
+          const imageUrl = await uploadProductImage(created.id, imageFile);
+          await supabase.from('products').update({ image_url: imageUrl } as never).eq('id', created.id);
+        }
+
+        if (quantity > 0) {
+          await supabase.from('stock_movements' as any).insert({
+            business_id: businessId,
+            product_id: created.id,
+            movement_type: 'opening_stock',
+            quantity_change: quantity,
+            quantity_after: quantity,
+            unit_cost: Number(form.cost_price || 0),
+            unit_price: Number(form.selling_price || 0),
+            note: 'Opening Stock',
+            created_by: user.id,
+            created_by_name: displayName || user.email || '',
+          });
+        }
+
+        toast({ title: 'Product added', description: quantity > 0 ? 'Opening stock was recorded too.' : 'Add stock later from Inventory.' });
       }
-      setForm(emptyForm);
-      setEditingId(null);
+
       setOpen(false);
-    } catch (err: any) {
-      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+      setEditing(null);
+      setForm(emptyForm);
+      setImageFile(null);
+      void load();
+    } catch (error) {
+      toast({
+        title: 'Could not save product',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'destructive',
+      });
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this product?')) return;
-    const { error } = await supabase.from('products').delete().eq('id', id);
-    if (error) toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    else toast({ title: 'Product deleted' });
+  const toggleArchive = async (row: ProductRow) => {
+    const { error } = await supabase.from('products').update({ is_archived: !row.is_archived } as never).eq('id', row.id);
+    if (error) {
+      toast({ title: 'Could not update product', description: error.message, variant: 'destructive' });
+      return;
+    }
+    toast({ title: row.is_archived ? 'Product restored' : 'Product archived' });
+    void load();
   };
 
-  const filtered = products.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.sku.toLowerCase().includes(search.toLowerCase()) ||
-    (p.category || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const deleteProduct = async (id: string) => {
+    const { error } = await supabase.from('products').delete().eq('id', id);
+    if (error) {
+      toast({ title: 'Could not delete product', description: error.message, variant: 'destructive' });
+      return;
+    }
+    toast({ title: 'Product deleted' });
+    void load();
+  };
 
   return (
     <AppLayout title="Products">
-      <div className="space-y-6 animate-fade-in">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search products..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+      <div className="space-y-6">
+        <section className="flex flex-col gap-4 rounded-3xl border border-border/70 bg-card/75 p-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight">Products</h1>
+            <p className="text-sm text-muted-foreground">
+              Manage your product catalog, prices, stock thresholds, and archived items. Add stock quantity here if you are introducing a new product with opening stock.
+            </p>
           </div>
-          {isAdmin && (
-            <Button onClick={openAdd}><Plus className="h-4 w-4 mr-2" /> Add Product</Button>
-          )}
-        </div>
 
-        <Dialog open={open} onOpenChange={o => { setOpen(o); if (!o) { setEditingId(null); setForm(emptyForm); } }}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-            <DialogHeader><DialogTitle>{editingId ? 'Edit Product' : 'Add Product'}</DialogTitle></DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Name</Label><Input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-                <div><Label>SKU</Label><Input required value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} /></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full sm:w-72">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input className="pl-9" placeholder="Search products..." value={search} onChange={(event) => setSearch(event.target.value)} />
+            </div>
+            <Button type="button" variant="outline" onClick={() => setShowArchived((value) => !value)}>
+              {showArchived ? 'Hide archived' : 'Show archived'}
+            </Button>
+            {canManage ? (
+              <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" /> Add Product</Button>
+            ) : null}
+          </div>
+        </section>
+
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{editing ? 'Edit Product' : 'Add Product'}</DialogTitle>
+            </DialogHeader>
+            <form className="space-y-4" onSubmit={saveProduct}>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Product Name</Label>
+                  <Input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Category</Label>
+                  <Input value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>SKU</Label>
+                  <Input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="Auto-generate if left blank" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Cost Price</Label>
+                  <Input type="number" min="0" step="0.01" value={form.cost_price} onChange={(event) => setForm((current) => ({ ...current, cost_price: event.target.value }))} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Selling Price</Label>
+                  <Input type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm((current) => ({ ...current, selling_price: event.target.value }))} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Stock Quantity</Label>
+                  <Input type="number" min="0" step="1" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Low Stock Threshold</Label>
+                  <Input type="number" min="0" step="1" value={form.low_stock_threshold} onChange={(event) => setForm((current) => ({ ...current, low_stock_threshold: event.target.value }))} required />
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Product Image (optional)</Label>
+                  <Input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setImageFile(event.target.files?.[0] || null)} />
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Category</Label><Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} /></div>
-                <div><Label>Brand</Label><Input value={form.brand} onChange={e => setForm({ ...form, brand: e.target.value })} /></div>
-              </div>
-              <div><Label>Sizes (comma-separated)</Label><Input value={form.sizes} onChange={e => setForm({ ...form, sizes: e.target.value })} placeholder="S, M, L, XL" /></div>
-              <div><Label>Colors (comma-separated)</Label><Input value={form.colors} onChange={e => setForm({ ...form, colors: e.target.value })} placeholder="Black, White, Red" /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Cost Price (GH₵)</Label><Input type="number" min={0} step="0.01" value={form.cost_price} onChange={e => setForm({ ...form, cost_price: Number(e.target.value) })} /></div>
-                <div><Label>Selling Price (GH₵)</Label><Input type="number" min={0} step="0.01" value={form.selling_price} onChange={e => setForm({ ...form, selling_price: Number(e.target.value) })} /></div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Reorder Level</Label><Input type="number" min={0} value={form.reorder_level} onChange={e => setForm({ ...form, reorder_level: Number(e.target.value) })} /></div>
-                <div><Label>Barcode</Label><Input value={form.barcode} onChange={e => setForm({ ...form, barcode: e.target.value })} /></div>
-              </div>
-              <div><Label>Supplier</Label><Input value={form.supplier} onChange={e => setForm({ ...form, supplier: e.target.value })} /></div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Saving...' : editingId ? 'Update Product' : 'Add Product'}
+              <Button type="submit" className="w-full" disabled={saving}>
+                {saving ? 'Saving...' : editing ? 'Update Product' : 'Save Product'}
               </Button>
             </form>
           </DialogContent>
         </Dialog>
 
-        <Card>
+        <Card className="border-border/70">
           <CardContent className="p-0">
-            {filtered.length > 0 ? (
+            {filteredRows.length > 0 ? (
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Product</TableHead>
-                      <TableHead>SKU</TableHead>
                       <TableHead>Category</TableHead>
-                      <TableHead>Brand</TableHead>
+                      <TableHead>Stock</TableHead>
                       <TableHead>Cost</TableHead>
-                      <TableHead>Price</TableHead>
-                      <TableHead>Supplier</TableHead>
-                      {isAdmin && <TableHead className="text-right">Actions</TableHead>}
+                      <TableHead>Selling</TableHead>
+                      <TableHead>Low Stock</TableHead>
+                      {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map(p => (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-medium">{p.name}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{p.sku}</TableCell>
-                        <TableCell>{p.category || '—'}</TableCell>
-                        <TableCell className="text-xs">{p.brand || '—'}</TableCell>
-                        <TableCell>{formatCurrency(Number(p.cost_price))}</TableCell>
-                        <TableCell className="font-semibold">{formatCurrency(Number(p.selling_price))}</TableCell>
-                        <TableCell className="text-xs">{p.supplier || '—'}</TableCell>
-                        {isAdmin && (
+                    {filteredRows.map((row) => (
+                      <TableRow key={row.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-muted">
+                              {row.image_url ? <img src={row.image_url} alt={row.name} className="h-full w-full object-cover" /> : <Package className="h-5 w-5 text-muted-foreground" />}
+                            </div>
+                            <div>
+                              <p className="font-medium">{row.name}</p>
+                              <p className="text-xs text-muted-foreground">{row.sku}</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>{row.category}</TableCell>
+                        <TableCell>{row.quantity}</TableCell>
+                        <TableCell>{formatCurrency(Number(row.cost_price || 0))}</TableCell>
+                        <TableCell className="font-semibold">{formatCurrency(Number(row.selling_price || 0))}</TableCell>
+                        <TableCell>{row.low_stock_threshold ?? row.reorder_level ?? 0}</TableCell>
+                        {canManage ? (
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(p)}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(p.id)}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            <div className="flex items-center justify-end gap-1">
+                              <Button variant="ghost" size="icon" onClick={() => openEdit(row)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="icon" onClick={() => void toggleArchive(row)}>
+                                {row.is_archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+                              </Button>
+                              <Button variant="ghost" size="icon" className="text-destructive" onClick={() => void deleteProduct(row.id)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
-                        )}
+                        ) : null}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -197,9 +342,9 @@ export default function ProductsPage() {
             ) : (
               <EmptyState
                 icon={<Package className="h-7 w-7 text-muted-foreground" />}
-                title="Add your first product to start selling"
-                description="Your inventory is empty right now. Add the first product so it can appear on the dashboard and be ready for sale."
-                action={isAdmin ? <Button onClick={openAdd}><Plus className="mr-2 h-4 w-4" /> Add Product</Button> : undefined}
+                title="No products yet"
+                description="Add your first product and opening stock to start selling."
+                action={canManage ? <Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" /> Add Product</Button> : undefined}
               />
             )}
           </CardContent>

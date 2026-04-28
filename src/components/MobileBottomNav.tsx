@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Home, ShoppingCart, Boxes, Receipt, MoreHorizontal, Users, BarChart3, PiggyBank, CreditCard, Settings, LogOut, Moon, Sun, X, LifeBuoy } from 'lucide-react';
+import { Home, ShoppingCart, Boxes, MoreHorizontal, Users, BarChart3, CreditCard, Settings, LogOut, Moon, Sun, X, ClipboardList, Banknote, Megaphone, Shield } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/hooks/useTheme';
@@ -9,27 +9,31 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 const PRIMARY = [
   { to: '/dashboard', label: 'Home', icon: Home, end: true },
   { to: '/sales', label: 'POS', icon: ShoppingCart },
-  { to: '/inventory', label: 'Inventory', icon: Boxes, minRole: 'manager' as const },
-  { to: '/expenses', label: 'Expenses', icon: Receipt, minRole: 'manager' as const },
+  { to: '/orders', label: 'Orders', icon: ClipboardList, minRole: 'sales' as const },
+  { to: '/inventory', label: 'Inventory', icon: Boxes, minRole: 'distributor' as const },
 ];
 
 const MORE_ITEMS = [
   { to: '/customers', label: 'Customers', icon: Users },
+  { to: '/products', label: 'Products', icon: Boxes, minRole: 'manager' as const },
+  { to: '/other-income', label: 'Other Income', icon: Banknote, minRole: 'manager' as const },
+  { to: '/expenses', label: 'Expenses', icon: CreditCard, minRole: 'manager' as const },
   { to: '/reports', label: 'Reports', icon: BarChart3, minRole: 'manager' as const },
-  { to: '/support', label: 'Support', icon: LifeBuoy },
-  { to: '/savings', label: 'Savings & Investments', icon: PiggyBank, adminOnly: true },
-  { to: '/billing', label: 'Billing', icon: CreditCard, adminOnly: true },
+  { to: '/staff', label: 'Staff / Users', icon: Shield, adminOnly: true },
+  { to: '/announcements', label: 'Announcements', icon: Megaphone },
   { to: '/settings', label: 'Settings', icon: Settings, adminOnly: true },
 ];
 
 export function MobileBottomNav() {
   const [moreOpen, setMoreOpen] = useState(false);
   const navigate = useNavigate();
-  const { isAdmin, isManager, displayName, avatarUrl, profileTitle, signOut } = useAuth();
+  const { isAdmin, isManager, isSalesperson, isDistributor, displayName, avatarUrl, profileTitle, signOut } = useAuth();
   const { isDark, toggle } = useTheme();
 
-  const canSee = (item: { minRole?: 'manager'; adminOnly?: boolean }) => {
+  const canSee = (item: { minRole?: 'manager' | 'sales' | 'distributor'; adminOnly?: boolean }) => {
     if (item.adminOnly) return isAdmin;
+    if (item.minRole === 'sales') return isAdmin || isManager || isSalesperson;
+    if (item.minRole === 'distributor') return isAdmin || isManager || isDistributor;
     if (item.minRole === 'manager') return isAdmin || isManager;
     return true;
   };

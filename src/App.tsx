@@ -3,7 +3,7 @@ import { BrowserRouter, Route, Routes, Navigate, useLocation } from "react-route
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { AuthProvider, useAuth, type AppRole } from "@/context/AuthContext";
 import { BusinessProvider, useBusiness } from "@/context/BusinessContext";
 import { SubscriptionProvider, useSubscription } from "@/context/SubscriptionContext";
 import { SignInPage, SignUpPage } from "./pages/SignInPage";
@@ -19,6 +19,10 @@ import SettingsPage from "./pages/SettingsPage";
 import SavingsInvestmentsPage from "./pages/SavingsInvestmentsPage";
 import BillingPage from "./pages/BillingPage";
 import SupportPage from "./pages/SupportPage";
+import OtherIncomePage from "./pages/OtherIncomePage";
+import OrdersPage from "./pages/OrdersPage";
+import StaffUsersPage from "./pages/StaffUsersPage";
+import AnnouncementsPage from "./pages/AnnouncementsPage";
 import PlatformLayout from "./pages/platform/PlatformLayout";
 import PlatformDashboard from "./pages/platform/PlatformDashboard";
 import BusinessesPage from "./pages/platform/BusinessesPage";
@@ -37,13 +41,13 @@ const queryClient = new QueryClient();
 function ProtectedRoute({
   children,
   adminOnly = false,
-  minRole,
+  allowedRoles,
   allowReadOnly = false,
   allowOnboarding = false,
 }: {
   children: React.ReactNode;
   adminOnly?: boolean;
-  minRole?: 'admin' | 'manager';
+  allowedRoles?: AppRole[];
   allowReadOnly?: boolean;
   allowOnboarding?: boolean;
 }) {
@@ -66,7 +70,7 @@ function ProtectedRoute({
   }
 
   if (adminOnly && !isAdmin) return <Navigate to="/dashboard" replace />;
-  if (minRole === 'manager' && role !== 'admin' && role !== 'manager') return <Navigate to="/dashboard" replace />;
+  if (allowedRoles && (!role || !allowedRoles.includes(role))) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -118,12 +122,16 @@ const App = () => (
                 {/* Tenant app */}
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<ProtectedRoute allowReadOnly allowOnboarding><Dashboard /></ProtectedRoute>} />
-                <Route path="/sales" element={<ProtectedRoute><SalesPage /></ProtectedRoute>} />
-                <Route path="/products" element={<ProtectedRoute minRole="manager"><ProductsPage /></ProtectedRoute>} />
-                <Route path="/inventory" element={<ProtectedRoute minRole="manager"><InventoryPage /></ProtectedRoute>} />
-                <Route path="/customers" element={<ProtectedRoute><CustomersPage /></ProtectedRoute>} />
-                <Route path="/expenses" element={<ProtectedRoute minRole="manager"><ExpensesPage /></ProtectedRoute>} />
-                <Route path="/reports" element={<ProtectedRoute minRole="manager"><ReportsPage /></ProtectedRoute>} />
+                <Route path="/sales" element={<ProtectedRoute allowedRoles={['admin', 'manager', 'salesperson']}><SalesPage /></ProtectedRoute>} />
+                <Route path="/products" element={<ProtectedRoute allowedRoles={['admin', 'manager']}><ProductsPage /></ProtectedRoute>} />
+                <Route path="/inventory" element={<ProtectedRoute allowedRoles={['admin', 'manager', 'distributor']}><InventoryPage /></ProtectedRoute>} />
+                <Route path="/customers" element={<ProtectedRoute allowedRoles={['admin', 'manager', 'salesperson']}><CustomersPage /></ProtectedRoute>} />
+                <Route path="/orders" element={<ProtectedRoute allowedRoles={['admin', 'manager', 'salesperson', 'distributor']}><OrdersPage /></ProtectedRoute>} />
+                <Route path="/other-income" element={<ProtectedRoute allowedRoles={['admin', 'manager']}><OtherIncomePage /></ProtectedRoute>} />
+                <Route path="/expenses" element={<ProtectedRoute allowedRoles={['admin', 'manager']}><ExpensesPage /></ProtectedRoute>} />
+                <Route path="/reports" element={<ProtectedRoute allowedRoles={['admin', 'manager']}><ReportsPage /></ProtectedRoute>} />
+                <Route path="/staff" element={<ProtectedRoute adminOnly><StaffUsersPage /></ProtectedRoute>} />
+                <Route path="/announcements" element={<ProtectedRoute allowReadOnly allowOnboarding><AnnouncementsPage /></ProtectedRoute>} />
                 <Route path="/support" element={<ProtectedRoute allowReadOnly allowOnboarding><SupportPage /></ProtectedRoute>} />
                 <Route path="/savings" element={<ProtectedRoute adminOnly><SavingsInvestmentsPage /></ProtectedRoute>} />
                 <Route path="/settings" element={<ProtectedRoute adminOnly allowReadOnly><SettingsPage /></ProtectedRoute>} />

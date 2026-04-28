@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/AppSidebar';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
@@ -11,13 +11,52 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { Logo } from '@/components/Logo';
 import { ReferralNotifications } from '@/components/referrals/ReferralNotifications';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 
 export function AppLayout({ children, title }: { children: ReactNode; title?: string }) {
-  const { displayName, avatarUrl, profileTitle } = useAuth();
-  const { business } = useBusiness();
+  const { user, displayName, avatarUrl, profileTitle } = useAuth();
+  const { business, businessId } = useBusiness();
   const { isDark } = useTheme();
   const isMobile = useIsMobile();
+  const navigate = useNavigate();
   const tenantLogo = isDark ? business?.logo_dark_url : business?.logo_light_url;
+  const [announcementBadge, setAnnouncementBadge] = useState(0);
+
+  useEffect(() => {
+    if (!user || !businessId) {
+      setAnnouncementBadge(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadAnnouncementBadge = async () => {
+      const [{ data: announcements }, { data: reads }] = await Promise.all([
+        supabase.from('business_announcements' as any).select('id').eq('active', true),
+        supabase.from('business_announcement_reads' as any).select('announcement_id').eq('user_id', user.id).eq('business_id', businessId),
+      ]);
+
+      if (cancelled) return;
+
+      const readIds = new Set(((reads || []) as any[]).map((row) => row.announcement_id));
+      const unread = ((announcements || []) as any[]).filter((row) => !readIds.has(row.id)).length;
+      setAnnouncementBadge(unread);
+    };
+
+    void loadAnnouncementBadge();
+
+    const channel = supabase
+      .channel(`app-layout-announcements-${businessId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'business_announcements' }, () => { void loadAnnouncementBadge(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'business_announcement_reads' }, () => { void loadAnnouncementBadge(); })
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
+  }, [businessId, user]);
 
   return (
     <SidebarProvider>
@@ -41,8 +80,16 @@ export function AppLayout({ children, title }: { children: ReactNode; title?: st
               {title && <h1 className="text-lg font-semibold text-foreground hidden md:block">{title}</h1>}
             </div>
             <div className="flex items-center gap-3">
-              <button className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all duration-200 active:scale-95 relative">
+              <button
+                onClick={() => navigate('/announcements')}
+                className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-all duration-200 active:scale-95 relative"
+              >
                 <Bell className="h-4 w-4" />
+                {announcementBadge > 0 ? (
+                  <span className="absolute -right-0.5 -top-0.5 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                    {announcementBadge > 9 ? '9+' : announcementBadge}
+                  </span>
+                ) : null}
               </button>
               <div className="flex items-center gap-2">
                 <Avatar className="h-7 w-7">

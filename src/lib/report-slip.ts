@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable';
 import sikaflowLogo from '@/assets/sikaflow-logo.png';
 import notoSansFontUrl from '@/assets/fonts/NotoSans-VariableFont.ttf';
 import { formatCurrency } from '@/lib/constants';
+import { getPaidAmount, isRecognizedSale } from '@/lib/sales-inventory';
 
 export type ReportRangePreset = 'today' | 'week' | 'month' | 'year' | 'custom';
 
@@ -128,7 +129,9 @@ function orderedTransactions({
   restocks,
 }: Omit<ReportSourceArgs, 'from' | 'to'>) {
   const rows: BaseTransaction[] = [
-    ...sales.map((sale) => ({
+    ...sales
+      .filter((sale) => isRecognizedSale(sale))
+      .map((sale) => ({
       date: sale.sale_date,
       timestamp: asTimestamp(sale.sale_date),
       reference: transactionRef('SAL', sale.reference, sale.id),
@@ -137,7 +140,7 @@ function orderedTransactions({
         sale.customer_name || 'Walk-in',
         sale.payment_status ? `Payment ${String(sale.payment_status).toUpperCase()}` : '',
       ].filter(Boolean).join(' • '),
-      moneyIn: Number(sale.total ?? 0),
+      moneyIn: getPaidAmount(sale),
       moneyOut: 0,
     })),
     ...expenses.map((expense) => ({
@@ -242,7 +245,9 @@ export function buildReportStatement({
       };
     });
 
-  const totalSales = sales.filter((sale) => inRange(sale.sale_date)).reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
+  const totalSales = sales
+    .filter((sale) => inRange(sale.sale_date) && isRecognizedSale(sale))
+    .reduce((sum, sale) => sum + getPaidAmount(sale), 0);
   const totalOtherIncome = otherIncome.filter((entry) => inRange(entry.income_date)).reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0);
   const totalExpenses = expenses.filter((expense) => inRange(expense.expense_date)).reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
   const totalSavings = savings.filter((saving) => inRange(saving.savings_date)).reduce((sum, saving) => sum + Number(saving.amount ?? 0), 0);

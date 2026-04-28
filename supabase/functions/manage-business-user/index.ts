@@ -18,7 +18,7 @@ const json = (status: number, body: unknown) =>
   });
 
 type Action =
-  | { action: 'invite'; mode: 'password' | 'email'; email: string; full_name: string; phone?: string; role: 'admin' | 'manager' | 'staff'; password?: string }
+  | { action: 'invite'; mode: 'password' | 'email'; email: string; full_name: string; phone?: string; role: 'admin' | 'manager' | 'staff' | 'salesperson' | 'distributor'; password?: string }
   | { action: 'remove'; user_id: string };
 
 Deno.serve(async (req) => {
@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
   if (body.action === 'invite') {
     const { mode, email, full_name, phone, role } = body;
     if (!email || !full_name || !role) return json(400, { error: 'email, full_name, role required' });
-    if (!['admin', 'manager', 'staff'].includes(role)) return json(400, { error: 'Invalid role' });
+    if (!['admin', 'manager', 'staff', 'salesperson', 'distributor'].includes(role)) return json(400, { error: 'Invalid role' });
     if (mode !== 'password' && mode !== 'email') return json(400, { error: 'mode must be password or email' });
 
     // Block if email already belongs to a user in another business

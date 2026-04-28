@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Receipt, BarChart3, PiggyBank, Settings, LogOut, Moon, Sun, CreditCard, LifeBuoy
+  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Receipt, BarChart3, Settings, LogOut, Moon, Sun, Megaphone, ClipboardList, Banknote, Shield
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/context/AuthContext';
@@ -14,29 +14,39 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 
 const allItems = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-  { title: 'Sales Entry', url: '/sales', icon: ShoppingCart },
+  { title: 'Sales / POS', url: '/sales', icon: ShoppingCart },
   { title: 'Products', url: '/products', icon: Package },
   { title: 'Inventory', url: '/inventory', icon: Boxes },
   { title: 'Customers', url: '/customers', icon: Users },
+  { title: 'Orders', url: '/orders', icon: ClipboardList },
+  { title: 'Other Income', url: '/other-income', icon: Banknote },
   { title: 'Expenses', url: '/expenses', icon: Receipt },
   { title: 'Reports', url: '/reports', icon: BarChart3 },
-  { title: 'Support', url: '/support', icon: LifeBuoy },
-  { title: 'Savings & Invest', url: '/savings', icon: PiggyBank },
-  { title: 'Billing', url: '/billing', icon: CreditCard },
+  { title: 'Staff / Users', url: '/staff', icon: Shield },
+  { title: 'Announcements', url: '/announcements', icon: Megaphone },
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
 
-const staffItems = ['Dashboard', 'Sales Entry', 'Customers', 'Support'];
-const managerItems = ['Dashboard', 'Sales Entry', 'Products', 'Inventory', 'Customers', 'Expenses', 'Reports', 'Support'];
+const salespersonItems = ['Dashboard', 'Sales / POS', 'Customers', 'Orders', 'Announcements'];
+const distributorItems = ['Dashboard', 'Inventory', 'Orders', 'Announcements'];
+const managerItems = ['Dashboard', 'Sales / POS', 'Products', 'Inventory', 'Customers', 'Orders', 'Other Income', 'Expenses', 'Reports', 'Announcements'];
 
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
-  const { isAdmin, isManager, displayName, avatarUrl, profileTitle, signOut, role } = useAuth();
+  const { isAdmin, isManager, isSalesperson, isDistributor, displayName, avatarUrl, profileTitle, signOut } = useAuth();
   const { business } = useBusiness();
   const { isDark, toggle } = useTheme();
 
-  const items = isAdmin ? allItems : isManager ? allItems.filter(i => managerItems.includes(i.title)) : allItems.filter(i => staffItems.includes(i.title));
+  const items = isAdmin
+    ? allItems
+    : isManager
+      ? allItems.filter((item) => managerItems.includes(item.title))
+      : isSalesperson
+        ? allItems.filter((item) => salespersonItems.includes(item.title))
+        : isDistributor
+          ? allItems.filter((item) => distributorItems.includes(item.title))
+          : allItems.filter((item) => salespersonItems.includes(item.title));
 
   const tenantName = business?.name || 'SikaFlow';
   const tenantLogoLight = business?.logo_light_url; // shown in light mode (black logo)

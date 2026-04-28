@@ -60,6 +60,7 @@ export default function SalesPage() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [saleDate, setSaleDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState('');
   const [overridePrice, setOverridePrice] = useState<number | null>(null);
   const [priceNote, setPriceNote] = useState('');
   const [saleNotes, setSaleNotes] = useState('');
@@ -93,7 +94,7 @@ export default function SalesPage() {
   }, [historyDateFrom, historyDateTo]);
 
   const fetchAllProducts = async () => {
-    const { data } = await supabase.from('products').select('*').order('name');
+    const { data } = await supabase.from('products').select('*').eq('is_archived', false).order('name');
     setAllProducts(data || []);
     setProducts((data || []).filter((p: any) => p.quantity > 0));
   };
@@ -118,8 +119,44 @@ export default function SalesPage() {
     setDiscount(0); setPaymentMethod('cash'); setAmountPaid(0);
     setCustomerName(''); setCustomerPhone('');
     setSaleDate(new Date().toISOString().slice(0, 10));
+    setDueDate('');
     setOverridePrice(null); setPriceNote(''); setSaleNotes('');
     setEditSaleId(null); setEditOriginal(null);
+  };
+
+  const createSaleMovement = async ({
+    saleItemId,
+    product,
+    soldQuantity,
+    unitCost,
+    soldPrice,
+    note,
+  }: {
+    saleItemId: string;
+    product: any;
+    soldQuantity: number;
+    unitCost: number;
+    soldPrice: number;
+    note: string;
+  }) => {
+    if (!businessId || !user) return;
+    const quantityAfter = Math.max(0, Number(product.quantity ?? 0) - soldQuantity);
+    const { error } = await supabase.from('stock_movements' as any).insert({
+      business_id: businessId,
+      product_id: product.id,
+      movement_type: 'sale',
+      quantity_change: soldQuantity * -1,
+      quantity_after: quantityAfter,
+      unit_cost: unitCost,
+      unit_price: soldPrice,
+      source_table: 'sale_items',
+      source_id: saleItemId,
+      note,
+      created_by: user.id,
+      created_by_name: displayName || user.email || '',
+      movement_date: new Date(saleDate).toISOString(),
+    });
+    if (error) throw error;
   };
 
   const handleProductChange = (v: string) => {
@@ -145,6 +182,7 @@ export default function SalesPage() {
     setCustomerName(sale.customer_name || '');
     setCustomerPhone(sale.customer_phone || '');
     setSaleDate(new Date(sale.sale_date).toISOString().slice(0, 10));
+    setDueDate(sale.due_date ? new Date(sale.due_date).toISOString().slice(0, 10) : '');
     setSaleNotes(sale.notes || '');
 
     const dp = Number(item.default_price);
@@ -173,6 +211,14 @@ export default function SalesPage() {
 
   const handleNewSale = async () => {
     if (!selectedProduct || !user || !businessId) return;
+    if (quantity > Number(selectedProduct.quantity ?? 0)) {
+      toast({
+        title: 'Not enough stock',
+        description: `Only ${selectedProduct.quantity} unit(s) of ${selectedProduct.name} are available.`,
+        variant: 'destructive',
+      });
+      return;
+    }
     setLoading(true);
     try {
       const { data: sale, error: saleErr } = await supabase.from('sales').insert({
@@ -186,11 +232,14 @@ export default function SalesPage() {
         amount_paid: amountPaid, balance,
         payment_method: paymentMethod,
         payment_status: paymentStatus,
+        due_date: dueDate ? new Date(`${dueDate}T00:00:00`).toISOString() : null,
+        status: 'completed',
+        sale_channel: 'pos',
         notes: saleNotes,
       }).select().single();
       if (saleErr) throw saleErr;
 
-      const { error: itemErr } = await supabase.from('sale_items').insert({
+      const { data: saleItem, error: itemErr } = await supabase.from('sale_items').insert({
         business_id: businessId,
         sale_id: sale.id,
         product_id: selectedProduct.id,
@@ -202,8 +251,17 @@ export default function SalesPage() {
         line_total: subtotal,
         default_price: defaultPrice,
         price_note: isPriceOverridden ? priceNote : '',
-      });
+      }).select().single();
       if (itemErr) throw itemErr;
+
+      await createSaleMovement({
+        saleItemId: saleItem.id,
+        product: selectedProduct,
+        soldQuantity: quantity,
+        unitCost: costPrice,
+        soldPrice: unitPrice,
+        note: saleNotes || 'POS sale',
+      });
 
       if (customerName && customerName !== 'Walk-in') {
         const { data: existing } = await supabase.from('customers').select('id').eq('name', customerName).maybeSingle();
@@ -257,6 +315,10 @@ export default function SalesPage() {
       const prevValues = oldSale ? `Product: ${oldItem?.product_name}, Qty: ${oldQty}, Price: ${oldItem?.unit_price}, Total: ${oldSale.total}, Discount: ${oldSale.discount}` : '';
 
       // 1. Delete old sale_items (triggers stock restore)
+      const priorIds = existingItems.map((item: any) => item.id).filter(Boolean);
+      if (priorIds.length > 0) {
+        await supabase.from('stock_movements' as any).delete().in('source_id', priorIds).eq('source_table', 'sale_items');
+      }
       await supabase.from('sale_items').delete().eq('sale_id', editSaleId);
 
       // 2. Update sale record
@@ -268,12 +330,15 @@ export default function SalesPage() {
         amount_paid: amountPaid, balance,
         payment_method: paymentMethod,
         payment_status: paymentStatus,
+        due_date: dueDate ? new Date(`${dueDate}T00:00:00`).toISOString() : null,
+        status: 'completed',
+        sale_channel: 'pos',
         notes: saleNotes,
       }).eq('id', editSaleId);
       if (saleErr) throw saleErr;
 
       // 3. Insert new sale_items (triggers stock deduction)
-      const { error: itemErr } = await supabase.from('sale_items').insert({
+      const { data: saleItem, error: itemErr } = await supabase.from('sale_items').insert({
         business_id: businessId!,
         sale_id: editSaleId,
         product_id: selectedProduct.id,
@@ -285,8 +350,17 @@ export default function SalesPage() {
         line_total: subtotal,
         default_price: defaultPrice,
         price_note: isPriceOverridden ? priceNote : '',
-      });
+      }).select().single();
       if (itemErr) throw itemErr;
+
+      await createSaleMovement({
+        saleItemId: saleItem.id,
+        product: selectedProduct,
+        soldQuantity: newQty,
+        unitCost: costPrice,
+        soldPrice: unitPrice,
+        note: saleNotes || 'Edited POS sale',
+      });
 
       // 4. Audit log
       const newValues = `Product: ${selectedProduct.name}, Qty: ${newQty}, Price: ${unitPrice}, Total: ${total}, Discount: ${discount}`;
@@ -309,6 +383,11 @@ export default function SalesPage() {
   const handleDeleteSale = async (saleId: string) => {
     setDeleting(true);
     try {
+      const existingItems = saleItems[saleId] || await fetchSaleItems(saleId);
+      const sourceIds = existingItems.map((item: any) => item.id).filter(Boolean);
+      if (sourceIds.length > 0) {
+        await supabase.from('stock_movements' as any).delete().in('source_id', sourceIds).eq('source_table', 'sale_items');
+      }
       await supabase.from('sale_items').delete().eq('sale_id', saleId);
       await supabase.from('sales').delete().eq('id', saleId);
       toast({ title: 'Sale deleted successfully', description: 'Stock has been restored automatically.' });
@@ -322,6 +401,11 @@ export default function SalesPage() {
     setDeleting(true);
     try {
       for (const saleId of selectedIds) {
+        const existingItems = saleItems[saleId] || await fetchSaleItems(saleId);
+        const sourceIds = existingItems.map((item: any) => item.id).filter(Boolean);
+        if (sourceIds.length > 0) {
+          await supabase.from('stock_movements' as any).delete().in('source_id', sourceIds).eq('source_table', 'sale_items');
+        }
         await supabase.from('sale_items').delete().eq('sale_id', saleId);
         await supabase.from('sales').delete().eq('id', saleId);
       }
@@ -542,6 +626,13 @@ export default function SalesPage() {
                 <div><Label>Amount Paid (GH₵)</Label><Input type="number" min={0} value={amountPaid} onChange={e => setAmountPaid(Number(e.target.value))} /></div>
                 <div><Label>Sale Date</Label><Input type="date" value={saleDate} onChange={e => setSaleDate(e.target.value)} /></div>
               </div>
+
+              {paymentStatus !== 'paid' && (
+                <div>
+                  <Label>Due Date</Label>
+                  <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div><Label>Customer Name</Label><Input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Walk-in" /></div>
