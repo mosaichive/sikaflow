@@ -37,6 +37,7 @@ import { toast } from 'sonner';
 import { QuickTour } from '@/components/QuickTour';
 import { cn } from '@/lib/utils';
 import { DashboardAdsStrip, type DashboardAd } from '@/components/dashboard/DashboardAdsStrip';
+import { calculateAvailableBusinessMoney } from '@/lib/business-money';
 
 const DAY_MS = 86400000;
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -44,6 +45,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 type Sale = {
   id: string;
   total: number | string;
+  amount_paid: number | string;
   balance: number | string;
   sale_date: string;
   customer_name: string | null;
@@ -134,6 +136,7 @@ type RawData = {
 
 type Metrics = {
   totalRevenue: number;
+  salesIncome: number;
   totalOtherIncome: number;
   totalIncome: number;
   salesProfit: number;
@@ -226,12 +229,17 @@ function calcMetrics(
   saleDocuments: SaleDocument[],
 ): Metrics {
   const totalRevenue = sales.reduce((sum, row) => sum + Number(row.total ?? 0), 0);
-  const totalOtherIncome = otherIncome.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
-  const totalIncome = totalRevenue + totalOtherIncome;
   const totalCost = saleItems.reduce((sum, item) => sum + Number(item.cost_price ?? 0) * Number(item.quantity ?? 0), 0);
   const salesProfit = totalRevenue - totalCost;
   const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
-  const totalProfit = salesProfit + totalOtherIncome - totalExpenses;
+  const moneySummary = calculateAvailableBusinessMoney({
+    sales,
+    otherIncome,
+    expenses,
+    savings,
+    investments,
+  });
+  const totalProfit = salesProfit + moneySummary.otherIncome - totalExpenses;
   const netProfit = totalProfit;
   const outstandingBalance = sales.reduce((sum, row) => sum + Number(row.balance ?? 0), 0);
   const lowStockCount = products.filter((product) => Number(product.quantity ?? 0) <= Number(product.reorder_level ?? 0)).length;
@@ -239,7 +247,6 @@ function calcMetrics(
   const totalInvestments = investments.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
   const totalFunding = funding.reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
   const totalRestockSpending = restocks.reduce((sum, row) => sum + Number(row.total_cost ?? 0), 0);
-  const availableCash = totalIncome - totalExpenses;
   const qtySold = saleItems.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0);
   const qtyRestocked = restocks.reduce((sum, row) => sum + Number(row.quantity_added ?? 0), 0);
   const stockLeft = products.reduce((sum, product) => sum + Math.max(0, Number(product.quantity ?? 0)), 0);
@@ -250,8 +257,9 @@ function calcMetrics(
 
   return {
     totalRevenue,
-    totalOtherIncome,
-    totalIncome,
+    salesIncome: moneySummary.salesIncome,
+    totalOtherIncome: moneySummary.otherIncome,
+    totalIncome: moneySummary.totalIncome,
     salesProfit,
     totalProfit,
     totalExpenses,
@@ -262,7 +270,7 @@ function calcMetrics(
     totalInvestments,
     totalFunding,
     totalRestockSpending,
-    availableCash,
+    availableCash: moneySummary.availableBusinessMoney,
     qtySold,
     qtyRestocked,
     stockLeft,
@@ -815,8 +823,8 @@ export default function Dashboard() {
             <section className="grid gap-3 md:grid-cols-3">
               <IncomeBreakdownCard
                 title="Sales Income"
-                value={activeMetrics.totalRevenue}
-                subtitle="Product sales only"
+                value={activeMetrics.salesIncome}
+                subtitle="Paid sales only"
               />
               <IncomeBreakdownCard
                 title="Other Income"

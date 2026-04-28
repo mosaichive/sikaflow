@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
 import { formatCurrency } from '@/lib/constants';
+import { calculateAvailableBusinessMoney } from '@/lib/business-money';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
@@ -92,20 +93,20 @@ export default function SavingsInvestmentsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, fetchAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, fetchAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, fetchAll)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
 
   const fetchAll = async () => {
-    const [b, s, i, f, salesRes, expRes, restockRes] = await Promise.all([
+    const [b, s, i, f, salesRes, expRes, otherIncomeRes] = await Promise.all([
       supabase.from('bank_accounts').select('*').order('created_at', { ascending: false }),
       supabase.from('savings').select('*').order('savings_date', { ascending: false }),
       supabase.from('investments').select('*').order('investment_date', { ascending: false }),
       supabase.from('investor_funding').select('*').order('date_received', { ascending: false }),
-      supabase.from('sales').select('total'),
+      supabase.from('sales').select('total, amount_paid, payment_status'),
       supabase.from('expenses').select('amount'),
-      supabase.from('restocks').select('total_cost'),
+      supabase.from('other_income' as any).select('amount'),
     ]);
     const banksData = (b.data || []) as any;
     const savingsData = (s.data || []) as any;
@@ -119,13 +120,14 @@ export default function SavingsInvestmentsPage() {
     setInvestments(investData);
     setFundings(fundingData);
 
-    const totalRevenue = salesData.reduce((sum: number, r: any) => sum + Number(r.total), 0);
-    const totalExpenses = expData.reduce((sum: number, r: any) => sum + Number(r.amount), 0);
-    const totalSav = savingsData.reduce((sum: number, r: any) => sum + Number(r.amount), 0);
-    const totalInv = investData.reduce((sum: number, r: any) => sum + Number(r.amount), 0);
-    const totalFund = fundingData.reduce((sum: number, r: any) => sum + Number(r.amount), 0);
-    const totalRestock = (restockRes.data || []).reduce((sum: number, r: any) => sum + Number(r.total_cost), 0);
-    setAvailableCash(totalRevenue + totalFund - totalExpenses - totalSav - totalInv - totalRestock);
+    const moneySummary = calculateAvailableBusinessMoney({
+      sales: salesData as any[],
+      otherIncome: (otherIncomeRes.data || []) as any[],
+      expenses: expData as any[],
+      savings: savingsData as any[],
+      investments: investData as any[],
+    });
+    setAvailableCash(moneySummary.availableBusinessMoney);
   };
 
   const totalSavings = savings.reduce((s, r) => s + Number(r.amount), 0);

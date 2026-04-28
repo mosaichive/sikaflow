@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
 import { formatCurrency } from '@/lib/constants';
+import { calculateAvailableBusinessMoney } from '@/lib/business-money';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
@@ -85,21 +86,21 @@ export default function InventoryPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'savings' }, fetchAll)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, fetchAll)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, fetchAll)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, fetchAll)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, []);
 
   const fetchAll = async () => {
-    const [prodRes, bankRes, restockRes, salesRes, expRes, savRes, invRes, funRes, saleItemsRes] = await Promise.all([
+    const [prodRes, bankRes, restockRes, salesRes, expRes, savRes, invRes, otherIncomeRes, saleItemsRes] = await Promise.all([
       supabase.from('products').select('*').order('name'),
       supabase.from('bank_accounts').select('*').order('created_at', { ascending: false }),
       supabase.from('restocks').select('*').order('restock_date', { ascending: false }),
-      supabase.from('sales').select('total'),
+      supabase.from('sales').select('total, amount_paid, payment_status'),
       supabase.from('expenses').select('amount'),
       supabase.from('savings').select('amount'),
       supabase.from('investments').select('amount'),
-      supabase.from('investor_funding').select('amount'),
+      supabase.from('other_income' as any).select('amount'),
       supabase.from('sale_items').select('product_id, quantity'),
     ]);
     setProducts(prodRes.data || []);
@@ -107,13 +108,14 @@ export default function InventoryPage() {
     setRestocks((restockRes.data || []) as any);
     setSaleItems(saleItemsRes.data || []);
 
-    const totalRevenue = (salesRes.data || []).reduce((s: number, r: any) => s + Number(r.total), 0);
-    const totalExp = (expRes.data || []).reduce((s: number, r: any) => s + Number(r.amount), 0);
-    const totalSav = (savRes.data || []).reduce((s: number, r: any) => s + Number(r.amount), 0);
-    const totalInv = (invRes.data || []).reduce((s: number, r: any) => s + Number(r.amount), 0);
-    const totalFund = (funRes.data || []).reduce((s: number, r: any) => s + Number(r.amount), 0);
-    const totalRestock = (restockRes.data || []).filter((r: any) => r.status === 'active').reduce((s: number, r: any) => s + Number(r.total_cost), 0);
-    setAvailableCash(totalRevenue + totalFund - totalExp - totalSav - totalInv - totalRestock);
+    const moneySummary = calculateAvailableBusinessMoney({
+      sales: (salesRes.data || []) as any[],
+      otherIncome: (otherIncomeRes.data || []) as any[],
+      expenses: (expRes.data || []) as any[],
+      savings: (savRes.data || []) as any[],
+      investments: (invRes.data || []) as any[],
+    });
+    setAvailableCash(moneySummary.availableBusinessMoney);
   };
 
   // Calculate stock from restocks - sales

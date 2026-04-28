@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
 import { formatCurrency, OTHER_INCOME_CATEGORIES, PAYMENT_METHODS } from '@/lib/constants';
+import { calculateAvailableBusinessMoney } from '@/lib/business-money';
 import { supabase } from '@/integrations/supabase/client';
 import { useBusiness } from '@/context/BusinessContext';
 import { useAuth } from '@/context/AuthContext';
@@ -48,6 +49,7 @@ type RawReportData = {
 
 type PeriodStats = {
   revenue: number;
+  salesIncome: number;
   otherIncome: number;
   totalIncome: number;
   cost: number;
@@ -89,8 +91,13 @@ function computePeriodStats({
   restocks,
 }: Omit<RawReportData, 'saleItems'> & { saleItems: any[] }): PeriodStats {
   const revenue = sales.reduce((sum, sale) => sum + Number(sale.total ?? 0), 0);
-  const totalOtherIncome = otherIncome.reduce((sum, record) => sum + Number(record.amount ?? 0), 0);
-  const totalIncome = revenue + totalOtherIncome;
+  const moneySummary = calculateAvailableBusinessMoney({
+    sales,
+    otherIncome,
+    expenses,
+    savings,
+    investments,
+  });
   const cost = saleItems.reduce((sum, item) => sum + Number(item.cost_price ?? 0) * Number(item.quantity ?? 0), 0);
   const grossProfit = revenue - cost;
   const totalExpenses = expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
@@ -101,17 +108,18 @@ function computePeriodStats({
 
   return {
     revenue,
-    otherIncome: totalOtherIncome,
-    totalIncome,
+    salesIncome: moneySummary.salesIncome,
+    otherIncome: moneySummary.otherIncome,
+    totalIncome: moneySummary.totalIncome,
     cost,
     grossProfit,
     expenses: totalExpenses,
-    netProfit: grossProfit + totalOtherIncome - totalExpenses,
+    netProfit: grossProfit + moneySummary.otherIncome - totalExpenses,
     savings: totalSavings,
     investments: totalInvestments,
     funding: totalFunding,
     restockSpending: totalRestocks,
-    availableCash: totalIncome - totalExpenses,
+    availableCash: moneySummary.availableBusinessMoney,
   };
 }
 
@@ -610,7 +618,7 @@ export default function ReportsPage() {
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Financial Summary (Selected Range)</p>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-8">
             {[
-              { label: 'Sales Income', value: stats.revenue, sub: 'POS and order sales only' },
+              { label: 'Sales Income', value: stats.salesIncome, sub: 'Paid and completed sales only' },
               { label: 'Other Income', value: stats.otherIncome, sub: 'Service, delivery, commission, and more' },
               { label: 'Total Income', value: stats.totalIncome, sub: 'Sales income + other income' },
               { label: 'Investor Funding', value: stats.funding, sub: 'External inflow' },
