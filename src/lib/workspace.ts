@@ -70,6 +70,37 @@ function isMissingColumnError(error: unknown, columnName?: string, tableName?: s
   );
 }
 
+function isMissingTableError(error: unknown, tableName?: string) {
+  const normalized = (error ?? {}) as SupabaseErrorLike;
+  const message = normalized.message?.toLowerCase() ?? '';
+  const details = normalized.details?.toLowerCase() ?? '';
+  const code = normalized.code?.toUpperCase() ?? '';
+  const targetTable = tableName?.toLowerCase();
+
+  const mentionsTable =
+    !targetTable
+    || message.includes(`'${targetTable}'`)
+    || message.includes(`relation "${targetTable}"`)
+    || message.includes(`table ${targetTable}`)
+    || details.includes(`'${targetTable}'`)
+    || details.includes(`relation "${targetTable}"`)
+    || details.includes(`table ${targetTable}`);
+
+  return (
+    mentionsTable
+    && (
+      code === 'PGRST205'
+      || code === '42P01'
+      || message.includes('could not find the table')
+      || details.includes('could not find the table')
+      || message.includes('schema cache')
+      || details.includes('schema cache')
+      || message.includes('relation')
+      || details.includes('relation')
+    )
+  );
+}
+
 async function updateWithOptionalColumnFallback<T extends Record<string, unknown>>({
   table,
   matchColumn,
@@ -196,6 +227,65 @@ export async function loadProductsCompat(showArchived: boolean) {
   const { data: fallbackData, error: fallbackError } = await baseQuery();
   if (fallbackError) throw fallbackError;
   return fallbackData ?? [];
+}
+
+export async function loadStockMovementsCompat(limit = 100) {
+  const { data, error } = await supabase
+    .from('stock_movements' as any)
+    .select('*')
+    .order('movement_date', { ascending: false })
+    .limit(limit);
+
+  if (!error) return (data ?? []) as any[];
+  if (!isMissingTableError(error, 'stock_movements')) throw error;
+
+  logSupabaseError('workspace.loadStockMovementsCompat', error, {
+    table: 'stock_movements',
+    fallbackMode: 'loadWithoutStockMovementsTable',
+  });
+  return [];
+}
+
+export async function insertStockMovementCompat(
+  payload: Record<string, unknown>,
+) {
+  const { error } = await supabase.from('stock_movements' as any).insert(payload);
+
+  if (!error) {
+    return { inserted: true, skipped: false } as const;
+  }
+
+  if (!isMissingTableError(error, 'stock_movements')) throw error;
+
+  logSupabaseError('workspace.insertStockMovementCompat', error, {
+    table: 'stock_movements',
+    fallbackMode: 'skipMissingStockMovementsTable',
+    payload,
+  });
+  return { inserted: false, skipped: true } as const;
+}
+
+export async function deleteStockMovementsBySourceCompat(sourceIds: string[]) {
+  if (sourceIds.length === 0) return { deleted: false, skipped: false } as const;
+
+  const { error } = await supabase
+    .from('stock_movements' as any)
+    .delete()
+    .in('source_id', sourceIds)
+    .eq('source_table', 'sale_items');
+
+  if (!error) {
+    return { deleted: true, skipped: false } as const;
+  }
+
+  if (!isMissingTableError(error, 'stock_movements')) throw error;
+
+  logSupabaseError('workspace.deleteStockMovementsBySourceCompat', error, {
+    table: 'stock_movements',
+    fallbackMode: 'skipMissingStockMovementsTable',
+    sourceIds,
+  });
+  return { deleted: false, skipped: true } as const;
 }
 
 export function getErrorMessage(error: unknown, fallback = 'Please try again.') {

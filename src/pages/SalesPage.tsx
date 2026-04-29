@@ -21,6 +21,11 @@ import { Plus, ShoppingCart, Trash2, Eye, Info, Pencil, FileText, ReceiptText } 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SaleDocumentViewerDialog } from '@/components/sales/SaleDocumentViewerDialog';
+import {
+  deleteStockMovementsBySourceCompat,
+  insertStockMovementCompat,
+  logSupabaseError,
+} from '@/lib/workspace';
 
 export default function SalesPage() {
   const { user, displayName, isAdmin, isManager } = useAuth();
@@ -141,7 +146,7 @@ export default function SalesPage() {
   }) => {
     if (!businessId || !user) return;
     const quantityAfter = Math.max(0, Number(product.quantity ?? 0) - soldQuantity);
-    const { error } = await supabase.from('stock_movements' as any).insert({
+    const result = await insertStockMovementCompat({
       business_id: businessId,
       product_id: product.id,
       movement_type: 'sale',
@@ -156,7 +161,12 @@ export default function SalesPage() {
       created_by_name: displayName || user.email || '',
       movement_date: new Date(saleDate).toISOString(),
     });
-    if (error) throw error;
+    if (result.skipped) {
+      logSupabaseError('sales.createSaleMovementSkipped', new Error('stock_movements table unavailable'), {
+        productId: product.id,
+        saleItemId,
+      });
+    }
   };
 
   const handleProductChange = (v: string) => {
@@ -317,7 +327,7 @@ export default function SalesPage() {
       // 1. Delete old sale_items (triggers stock restore)
       const priorIds = existingItems.map((item: any) => item.id).filter(Boolean);
       if (priorIds.length > 0) {
-        await supabase.from('stock_movements' as any).delete().in('source_id', priorIds).eq('source_table', 'sale_items');
+        await deleteStockMovementsBySourceCompat(priorIds);
       }
       await supabase.from('sale_items').delete().eq('sale_id', editSaleId);
 
@@ -386,7 +396,7 @@ export default function SalesPage() {
       const existingItems = saleItems[saleId] || await fetchSaleItems(saleId);
       const sourceIds = existingItems.map((item: any) => item.id).filter(Boolean);
       if (sourceIds.length > 0) {
-        await supabase.from('stock_movements' as any).delete().in('source_id', sourceIds).eq('source_table', 'sale_items');
+        await deleteStockMovementsBySourceCompat(sourceIds);
       }
       await supabase.from('sale_items').delete().eq('sale_id', saleId);
       await supabase.from('sales').delete().eq('id', saleId);
@@ -404,7 +414,7 @@ export default function SalesPage() {
         const existingItems = saleItems[saleId] || await fetchSaleItems(saleId);
         const sourceIds = existingItems.map((item: any) => item.id).filter(Boolean);
         if (sourceIds.length > 0) {
-          await supabase.from('stock_movements' as any).delete().in('source_id', sourceIds).eq('source_table', 'sale_items');
+          await deleteStockMovementsBySourceCompat(sourceIds);
         }
         await supabase.from('sale_items').delete().eq('sale_id', saleId);
         await supabase.from('sales').delete().eq('id', saleId);

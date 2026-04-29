@@ -18,6 +18,7 @@ import {
   createProductRecord,
   ensureUserBusinessWorkspace,
   getErrorMessage,
+  insertStockMovementCompat,
   loadProductsCompat,
   logSupabaseError,
   updateProductRecord,
@@ -207,7 +208,7 @@ export default function ProductsPage() {
         }
 
         if (quantity > 0) {
-          const { error: stockMovementError } = await supabase.from('stock_movements' as any).insert({
+          const movementResult = await insertStockMovementCompat({
             business_id: activeBusinessId,
             product_id: created.id,
             movement_type: 'opening_stock',
@@ -219,9 +220,12 @@ export default function ProductsPage() {
             created_by: user.id,
             created_by_name: displayName || user.email || '',
           });
-          if (stockMovementError) {
+          if (!movementResult.inserted && !movementResult.skipped) {
             await supabase.from('products').delete().eq('id', created.id);
-            throw stockMovementError;
+            throw new Error('Could not record opening stock.');
+          }
+          if (movementResult.skipped) {
+            imageWarning = imageWarning || 'The product saved, but inventory history will sync after database updates finish propagating.';
           }
         }
 

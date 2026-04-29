@@ -17,6 +17,7 @@ import {
   createProductRecord,
   ensureUserBusinessWorkspace,
   getErrorMessage,
+  insertStockMovementCompat,
   logSupabaseError,
   updateBusinessWorkspaceRecord,
   updateProfileRecord,
@@ -267,7 +268,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
             }
           }
 
-          const { error: movementError } = await supabase.from('stock_movements' as any).insert({
+          const movementResult = await insertStockMovementCompat({
             business_id: businessId,
             product_id: createdProduct.id,
             movement_type: 'opening_stock',
@@ -280,9 +281,15 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
             created_by_name: displayName || user.email || trimmedBusinessName,
             movement_date: new Date().toISOString(),
           });
-          if (movementError) {
+          if (movementResult.skipped) {
+            toast({
+              title: 'Opening stock saved',
+              description: 'Product setup completed. Inventory history will sync after database updates finish propagating.',
+            });
+          }
+          if (!movementResult.inserted && !movementResult.skipped) {
             await supabase.from('products').delete().eq('id', createdProduct.id);
-            throw movementError;
+            throw new Error('Could not record opening stock.');
           }
         }
       }

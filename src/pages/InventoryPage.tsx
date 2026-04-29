@@ -18,6 +18,7 @@ import { formatCurrency, PAYMENT_METHODS, STOCK_MOVEMENT_TYPES, SIKAFLOW_TOOLTIP
 import { calculateAvailableBusinessMoney, calculateStockValue, toNumber } from '@/lib/sales-inventory';
 import { AlertTriangle, Boxes, PackagePlus, Plus } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { insertStockMovementCompat, loadProductsCompat, loadStockMovementsCompat, logSupabaseError } from '@/lib/workspace';
 
 type ProductRow = {
   id: string;
@@ -68,8 +69,8 @@ export default function InventoryPage() {
 
   const load = useCallback(async () => {
     const [productsRes, movementsRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.all([
-      supabase.from('products').select('*').eq('is_archived', false).order('name'),
-      supabase.from('stock_movements' as any).select('*').order('movement_date', { ascending: false }).limit(100),
+      loadProductsCompat(false),
+      loadStockMovementsCompat(100),
       supabase.from('sales').select('total,amount_paid,payment_status,status'),
       supabase.from('expenses').select('amount'),
       supabase.from('savings').select('amount'),
@@ -77,8 +78,8 @@ export default function InventoryPage() {
       supabase.from('other_income' as any).select('amount'),
     ]);
 
-    setProducts((productsRes.data || []) as ProductRow[]);
-    setMovements((movementsRes.data || []) as StockMovementRow[]);
+    setProducts(productsRes as ProductRow[]);
+    setMovements(movementsRes as StockMovementRow[]);
     const money = calculateAvailableBusinessMoney({
       sales: (salesRes.data || []) as any[],
       otherIncome: (otherIncomeRes.data || []) as any[],
@@ -140,7 +141,7 @@ export default function InventoryPage() {
       const { error: productError } = await supabase.from('products').update({ quantity: nextQuantity } as never).eq('id', selectedProduct.id);
       if (productError) throw productError;
 
-      const { error: movementError } = await supabase.from('stock_movements' as any).insert({
+      const movementResult = await insertStockMovementCompat({
         business_id: businessId,
         product_id: selectedProduct.id,
         movement_type: form.movement_type,
@@ -153,7 +154,12 @@ export default function InventoryPage() {
         created_by_name: displayName || user.email || '',
         movement_date: new Date().toISOString(),
       });
-      if (movementError) throw movementError;
+      if (movementResult.skipped) {
+        logSupabaseError('inventory.saveMovementSkipped', new Error('stock_movements table unavailable'), {
+          productId: selectedProduct.id,
+          movementType: form.movement_type,
+        });
+      }
 
       if (form.movement_type === 'restock') {
         const totalCost = unitCost * quantity;
