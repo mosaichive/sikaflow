@@ -233,12 +233,16 @@ function MetricCard({
   );
 }
 
+function getOnboardingCompletionKey(userId: string) {
+  return `sikaflow_onboarding_complete_${userId}`;
+}
+
 export default function Dashboard() {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
   const { business } = useBusiness();
-  const { isAdmin, isManager, displayName, onboardingCompleted } = useAuth();
+  const { isAdmin, isManager, displayName, onboardingCompleted, user } = useAuth();
   const [data, setData] = useState<DashboardData>({
     sales: [],
     saleItems: [],
@@ -251,6 +255,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
   const [setupDismissed, setSetupDismissed] = useState(false);
+  const [localOnboardingCompleted, setLocalOnboardingCompleted] = useState(false);
   const [selectedYear, setSelectedYear] = useState(String(currentYear));
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
 
@@ -303,7 +308,22 @@ export default function Dashboard() {
     };
   }, [fetchDashboard]);
 
-  const setupRequired = !business || !onboardingCompleted;
+  useEffect(() => {
+    if (!user?.id || typeof window === 'undefined') {
+      setLocalOnboardingCompleted(false);
+      return;
+    }
+    const completed = window.localStorage.getItem(getOnboardingCompletionKey(user.id)) === 'true';
+    setLocalOnboardingCompleted(completed);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || typeof window === 'undefined' || !onboardingCompleted) return;
+    window.localStorage.setItem(getOnboardingCompletionKey(user.id), 'true');
+    setLocalOnboardingCompleted(true);
+  }, [onboardingCompleted, user?.id]);
+
+  const setupRequired = !business || (!onboardingCompleted && !localOnboardingCompleted);
 
   useEffect(() => {
     if (!setupRequired) {
@@ -561,7 +581,12 @@ export default function Dashboard() {
             if (!nextOpen && setupRequired) setSetupDismissed(true);
           }}
           onCompleted={() => {
+            if (user?.id && typeof window !== 'undefined') {
+              window.localStorage.setItem(getOnboardingCompletionKey(user.id), 'true');
+            }
+            setLocalOnboardingCompleted(true);
             setSetupDismissed(false);
+            setSetupDialogOpen(false);
             void fetchDashboard();
           }}
         />

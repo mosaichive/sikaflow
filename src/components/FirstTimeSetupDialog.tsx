@@ -42,6 +42,10 @@ interface FirstTimeSetupDialogProps {
   onCompleted?: () => void;
 }
 
+function getOnboardingCompletionKey(userId: string) {
+  return `sikaflow_onboarding_complete_${userId}`;
+}
+
 function makeProductRow(): OpeningStockProduct {
   return {
     id: crypto.randomUUID(),
@@ -295,6 +299,10 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
       }
 
       await updateProfileRecord(user.id, { onboarding_completed: true });
+
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(getOnboardingCompletionKey(user.id), 'true');
+      }
 
       await Promise.all([refreshProfile(), refreshBusiness(), refreshSubscription()]);
       toast({

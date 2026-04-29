@@ -14,6 +14,16 @@ interface ProfileData {
   onboarding_completed: boolean;
 }
 
+function isMissingProfileColumnError(error: unknown, column: string) {
+  const message = String((error as { message?: string } | null)?.message || '').toLowerCase();
+  const details = String((error as { details?: string } | null)?.details || '').toLowerCase();
+  const target = column.toLowerCase();
+  return (
+    (message.includes(target) && (message.includes('schema cache') || message.includes('column'))) ||
+    (details.includes(target) && (details.includes('schema cache') || details.includes('column')))
+  );
+}
+
 export interface AppUser {
   id: string;
   email: string;
@@ -130,11 +140,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const uid = userId || user?.id;
     if (!uid) return { found: false, error: false };
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('profiles')
       .select('display_name, avatar_url, title, phone, bio, onboarding_completed')
       .eq('user_id', uid)
       .maybeSingle();
+
+    if (error && isMissingProfileColumnError(error, 'onboarding_completed')) {
+      const fallbackResult = await supabase
+        .from('profiles')
+        .select('display_name, avatar_url, title, phone, bio')
+        .eq('user_id', uid)
+        .maybeSingle();
+      data = fallbackResult.data ? { ...fallbackResult.data, onboarding_completed: false } : null;
+      error = fallbackResult.error;
+    }
 
     if (error) {
       console.warn('Unable to load user profile. Check Supabase auth and RLS policies.', error.message);
