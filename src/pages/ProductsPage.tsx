@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,6 +14,7 @@ import { useBusiness } from '@/context/BusinessContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency } from '@/lib/constants';
 import { Package, Plus, Search, Pencil, Trash2, ArchiveRestore, Archive } from 'lucide-react';
+import { ensureUserBusinessWorkspace, getErrorMessage, logSupabaseError } from '@/lib/workspace';
 
 type ProductRow = {
   id: string;
@@ -47,6 +49,7 @@ export default function ProductsPage() {
   const { isAdmin, isManager, user, displayName } = useAuth();
   const { businessId } = useBusiness();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
@@ -108,10 +111,9 @@ export default function ProductsPage() {
     setOpen(true);
   };
 
-  const uploadProductImage = async (productId: string, file: File) => {
-    if (!businessId) return '';
+  const uploadProductImage = async (activeBusinessId: string, productId: string, file: File) => {
     const ext = file.name.split('.').pop() || 'png';
-    const path = `${businessId}/${productId}-${Date.now()}.${ext}`;
+    const path = `${activeBusinessId}/${productId}-${Date.now()}.${ext}`;
     const { error } = await supabase.storage.from('product-images').upload(path, file, { upsert: true });
     if (error) throw error;
     const { data } = supabase.storage.from('product-images').getPublicUrl(path);
@@ -120,14 +122,32 @@ export default function ProductsPage() {
 
   const saveProduct = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!businessId || !user || !canManage) return;
+    if (!user || !canManage) return;
     setSaving(true);
 
     try {
+      const activeBusinessId = await ensureUserBusinessWorkspace({
+        existingBusinessId: businessId,
+        user,
+        displayName: displayName || user.email || undefined,
+        allowCreate: false,
+      });
+      if (!activeBusinessId) {
+        toast({
+          title: 'Complete setup first',
+          description: 'Create your business workspace from the setup flow before adding products.',
+          variant: 'destructive',
+        });
+        navigate('/dashboard', { replace: true });
+        return;
+      }
+
       const quantity = Math.max(0, Number(form.quantity || 0));
       const lowStockThreshold = Math.max(0, Number(form.low_stock_threshold || 0));
+      let imageWarning = '';
       const payload = {
-        business_id: businessId,
+        business_id: activeBusinessId,
+        user_id: user.id,
         name: form.name.trim(),
         category: form.category.trim(),
         sku: form.sku.trim() || generateSku(form.name),
@@ -144,23 +164,47 @@ export default function ProductsPage() {
         if (error) throw error;
 
         if (imageFile) {
-          const imageUrl = await uploadProductImage(editing.id, imageFile);
-          await supabase.from('products').update({ image_url: imageUrl } as never).eq('id', editing.id);
+          try {
+            const imageUrl = await uploadProductImage(activeBusinessId, editing.id, imageFile);
+            const { error: imageUpdateError } = await supabase
+              .from('products')
+              .update({ image_url: imageUrl } as never)
+              .eq('id', editing.id);
+            if (imageUpdateError) throw imageUpdateError;
+          } catch (imageError) {
+            logSupabaseError('products.edit.imageUpload', imageError, {
+              productId: editing.id,
+              businessId: activeBusinessId,
+            });
+            imageWarning = 'The product saved, but the image could not be uploaded.';
+          }
         }
 
-        toast({ title: 'Product updated' });
+        toast({ title: 'Product updated', description: imageWarning || undefined });
       } else {
         const { data: created, error } = await supabase.from('products').insert(payload as never).select('id').single();
         if (error) throw error;
 
         if (imageFile) {
-          const imageUrl = await uploadProductImage(created.id, imageFile);
-          await supabase.from('products').update({ image_url: imageUrl } as never).eq('id', created.id);
+          try {
+            const imageUrl = await uploadProductImage(activeBusinessId, created.id, imageFile);
+            const { error: imageUpdateError } = await supabase
+              .from('products')
+              .update({ image_url: imageUrl } as never)
+              .eq('id', created.id);
+            if (imageUpdateError) throw imageUpdateError;
+          } catch (imageError) {
+            logSupabaseError('products.create.imageUpload', imageError, {
+              productId: created.id,
+              businessId: activeBusinessId,
+            });
+            imageWarning = 'The product saved, but the image could not be uploaded.';
+          }
         }
 
         if (quantity > 0) {
-          await supabase.from('stock_movements' as any).insert({
-            business_id: businessId,
+          const { error: stockMovementError } = await supabase.from('stock_movements' as any).insert({
+            business_id: activeBusinessId,
             product_id: created.id,
             movement_type: 'opening_stock',
             quantity_change: quantity,
@@ -171,9 +215,16 @@ export default function ProductsPage() {
             created_by: user.id,
             created_by_name: displayName || user.email || '',
           });
+          if (stockMovementError) {
+            await supabase.from('products').delete().eq('id', created.id);
+            throw stockMovementError;
+          }
         }
 
-        toast({ title: 'Product added', description: quantity > 0 ? 'Opening stock was recorded too.' : 'Add stock later from Inventory.' });
+        toast({
+          title: 'Product added',
+          description: imageWarning || (quantity > 0 ? 'Opening stock was recorded too.' : 'Add stock later from Inventory.'),
+        });
       }
 
       setOpen(false);
@@ -182,9 +233,14 @@ export default function ProductsPage() {
       setImageFile(null);
       void load();
     } catch (error) {
+      logSupabaseError('products.save', error, {
+        editingId: editing?.id ?? null,
+        businessId,
+        userId: user.id,
+      });
       toast({
         title: 'Could not save product',
-        description: error instanceof Error ? error.message : 'Please try again.',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     } finally {

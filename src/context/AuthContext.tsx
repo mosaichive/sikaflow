@@ -11,6 +11,7 @@ interface ProfileData {
   title: string;
   phone: string;
   bio: string;
+  onboarding_completed: boolean;
 }
 
 export interface AppUser {
@@ -43,6 +44,8 @@ interface AuthContextType {
   isManager: boolean;
   isSalesperson: boolean;
   isDistributor: boolean;
+  isSuperAdmin: boolean;
+  onboardingCompleted: boolean;
 }
 
 const emptyProfile: ProfileData = {
@@ -51,6 +54,7 @@ const emptyProfile: ProfileData = {
   title: '',
   phone: '',
   bio: '',
+  onboarding_completed: false,
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -107,8 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase
       .from('user_roles')
       .select('role')
-      .eq('user_id', userId)
-      .maybeSingle();
+      .eq('user_id', userId);
 
     if (error) {
       console.warn('Unable to load user role. Check Supabase auth and RLS policies.', error.message);
@@ -116,7 +119,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    const nextRole = (data?.role as AppRole) || null;
+    const roles = ((data || []) as Array<{ role: AppRole }>).map((row) => row.role);
+    const priority: AppRole[] = ['super_admin', 'admin', 'manager', 'salesperson', 'distributor', 'staff'];
+    const nextRole = priority.find((candidate) => roles.includes(candidate)) || null;
     setRole(nextRole);
     return nextRole;
   }, []);
@@ -127,7 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('display_name, avatar_url, title, phone, bio')
+      .select('display_name, avatar_url, title, phone, bio, onboarding_completed')
       .eq('user_id', uid)
       .maybeSingle();
 
@@ -143,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       title: data.title || '',
       phone: data.phone || '',
       bio: data.bio || '',
+      onboarding_completed: Boolean((data as any).onboarding_completed),
     } : emptyProfile);
     return { found: !!data, error: false };
   }, [user?.id]);
@@ -181,8 +187,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [authLoading, fetchProfile, fetchRole, user]);
 
+  const userId = user?.id ?? null;
+
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
 
     const syncReferral = async () => {
       try {
@@ -202,7 +210,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     void syncReferral();
-  }, [user?.id]);
+  }, [userId]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
@@ -223,11 +231,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profilePhone: profile.phone,
       profileBio: profile.bio,
       signOut,
-      refreshProfile: async () => { await fetchProfile(); },
-      isAdmin: role === 'admin' || role === 'super_admin',
+      refreshProfile: async () => {
+        if (!user?.id) return;
+        await Promise.all([fetchProfile(user.id), fetchRole(user.id)]);
+      },
+      isAdmin: role === 'admin',
       isManager: role === 'manager',
       isSalesperson: role === 'salesperson',
       isDistributor: role === 'distributor',
+      isSuperAdmin: role === 'super_admin',
+      onboardingCompleted: profile.onboarding_completed,
     }}>
       {children}
     </AuthContext.Provider>

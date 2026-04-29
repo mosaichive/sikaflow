@@ -22,14 +22,14 @@ import SupportPage from "./pages/SupportPage";
 import OtherIncomePage from "./pages/OtherIncomePage";
 import OrdersPage from "./pages/OrdersPage";
 import StaffUsersPage from "./pages/StaffUsersPage";
-import AnnouncementsPage from "./pages/AnnouncementsPage";
+import TenantAnnouncementsPage from "./pages/AnnouncementsPage";
 import PlatformLayout from "./pages/platform/PlatformLayout";
 import PlatformDashboard from "./pages/platform/PlatformDashboard";
 import BusinessesPage from "./pages/platform/BusinessesPage";
 import SubscriptionsPage from "./pages/platform/SubscriptionsPage";
 import PaymentsPage from "./pages/platform/PaymentsPage";
 import PaymentMethodsPage from "./pages/platform/PaymentMethodsPage";
-import AnnouncementsPage from "./pages/platform/AnnouncementsPage";
+import PlatformAnnouncementsPage from "./pages/platform/AnnouncementsPage";
 import AdsPage from "./pages/platform/AdsPage";
 import ReferralsPage from "./pages/platform/ReferralsPage";
 import PlatformSupportPage from "./pages/platform/PlatformSupportPage";
@@ -37,6 +37,13 @@ import NotFound from "./pages/NotFound";
 import { BrandLoader } from "./components/BrandLoader";
 
 const queryClient = new QueryClient();
+
+function getRoleHomePath(role: AppRole | null, isSuperAdmin: boolean) {
+  if (isSuperAdmin || role === 'super_admin') return '/super-admin';
+  if (role === 'salesperson') return '/sales';
+  if (role === 'distributor') return '/inventory';
+  return '/dashboard';
+}
 
 function ProtectedRoute({
   children,
@@ -60,7 +67,7 @@ function ProtectedRoute({
     return <div className="min-h-screen flex items-center justify-center bg-background"><BrandLoader text="Loading..." size="md" /></div>;
   }
   if (!user) return <Navigate to="/sign-in" replace state={{ from: location.pathname + location.search }} />;
-  if (isSuperAdmin) return <Navigate to="/platform" replace />;
+  if (isSuperAdmin) return <Navigate to="/super-admin" replace />;
   if (!business && !allowOnboarding) return <Navigate to="/dashboard" replace />;
 
   // Subscription gating: only force billing if a subscription row exists AND access is truly denied.
@@ -69,8 +76,8 @@ function ProtectedRoute({
     return <Navigate to="/billing" replace />;
   }
 
-  if (adminOnly && !isAdmin) return <Navigate to="/dashboard" replace />;
-  if (allowedRoles && (!role || !allowedRoles.includes(role))) return <Navigate to="/dashboard" replace />;
+  if (adminOnly && !isAdmin) return <Navigate to={getRoleHomePath(role, isSuperAdmin)} replace />;
+  if (allowedRoles && (!role || !allowedRoles.includes(role))) return <Navigate to={getRoleHomePath(role, isSuperAdmin)} replace />;
   return <>{children}</>;
 }
 
@@ -79,7 +86,7 @@ function AuthRoute({ children }: { children: React.ReactNode }) {
   const { isSuperAdmin, loading: subLoading } = useSubscription();
   const location = useLocation();
   if (loading || subLoading) return <div className="min-h-screen flex items-center justify-center bg-background"><BrandLoader text="Loading..." size="md" /></div>;
-  if (user && isSuperAdmin) return <Navigate to="/platform" replace />;
+  if (user && isSuperAdmin) return <Navigate to="/super-admin" replace />;
   if (user) {
     // If they were redirected here from a protected route, return to that page.
     const from = (location.state as { from?: string } | null)?.from;
@@ -107,7 +114,8 @@ const App = () => (
                 <Route path="/verify" element={<Navigate to="/dashboard" replace />} />
 
                 {/* Platform Super Admin */}
-                <Route path="/platform" element={<PlatformLayout />}>
+                <Route path="/platform/*" element={<Navigate to="/super-admin" replace />} />
+                <Route path="/super-admin" element={<PlatformLayout />}>
                   <Route index element={<PlatformDashboard />} />
                   <Route path="businesses" element={<BusinessesPage />} />
                   <Route path="subscriptions" element={<SubscriptionsPage />} />
@@ -116,7 +124,7 @@ const App = () => (
                   <Route path="referrals" element={<ReferralsPage />} />
                   <Route path="ads" element={<AdsPage />} />
                   <Route path="support" element={<PlatformSupportPage />} />
-                  <Route path="announcements" element={<AnnouncementsPage />} />
+                  <Route path="announcements" element={<PlatformAnnouncementsPage />} />
                 </Route>
 
                 {/* Tenant app */}
@@ -131,7 +139,7 @@ const App = () => (
                 <Route path="/expenses" element={<ProtectedRoute allowedRoles={['admin', 'manager']}><ExpensesPage /></ProtectedRoute>} />
                 <Route path="/reports" element={<ProtectedRoute allowedRoles={['admin', 'manager']}><ReportsPage /></ProtectedRoute>} />
                 <Route path="/staff" element={<ProtectedRoute adminOnly><StaffUsersPage /></ProtectedRoute>} />
-                <Route path="/announcements" element={<ProtectedRoute allowReadOnly allowOnboarding><AnnouncementsPage /></ProtectedRoute>} />
+                <Route path="/announcements" element={<ProtectedRoute allowReadOnly allowOnboarding><TenantAnnouncementsPage /></ProtectedRoute>} />
                 <Route path="/support" element={<ProtectedRoute allowReadOnly allowOnboarding><SupportPage /></ProtectedRoute>} />
                 <Route path="/savings" element={<ProtectedRoute adminOnly><SavingsInvestmentsPage /></ProtectedRoute>} />
                 <Route path="/settings" element={<ProtectedRoute adminOnly allowReadOnly><SettingsPage /></ProtectedRoute>} />

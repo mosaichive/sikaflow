@@ -107,6 +107,7 @@ export type Database = {
       }
       businesses: {
         Row: {
+          business_type: string
           created_at: string
           email: string | null
           email_verified: boolean
@@ -124,6 +125,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          business_type?: string
           created_at?: string
           email?: string | null
           email_verified?: boolean
@@ -141,6 +143,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          business_type?: string
           created_at?: string
           email?: string | null
           email_verified?: boolean
@@ -516,6 +519,7 @@ export type Database = {
           id: string
           level: string
           starts_at: string
+          target_business_id: string | null
           title: string
           updated_at: string
         }
@@ -529,6 +533,7 @@ export type Database = {
           id?: string
           level?: string
           starts_at?: string
+          target_business_id?: string | null
           title: string
           updated_at?: string
         }
@@ -542,10 +547,61 @@ export type Database = {
           id?: string
           level?: string
           starts_at?: string
+          target_business_id?: string | null
           title?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "platform_announcements_target_business_id_fkey"
+            columns: ["target_business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      platform_announcement_reads: {
+        Row: {
+          announcement_id: string
+          business_id: string
+          created_at: string
+          id: string
+          read_at: string
+          user_id: string
+        }
+        Insert: {
+          announcement_id: string
+          business_id: string
+          created_at?: string
+          id?: string
+          read_at?: string
+          user_id: string
+        }
+        Update: {
+          announcement_id?: string
+          business_id?: string
+          created_at?: string
+          id?: string
+          read_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "platform_announcement_reads_announcement_id_fkey"
+            columns: ["announcement_id"]
+            isOneToOne: false
+            referencedRelation: "platform_announcements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "platform_announcement_reads_business_id_fkey"
+            columns: ["business_id"]
+            isOneToOne: false
+            referencedRelation: "businesses"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       platform_audit_log: {
         Row: {
@@ -638,6 +694,8 @@ export type Database = {
           created_at: string
           id: string
           image_url: string | null
+          is_archived: boolean
+          low_stock_threshold: number
           name: string
           quantity: number
           reorder_level: number
@@ -646,6 +704,7 @@ export type Database = {
           sku: string
           supplier: string | null
           updated_at: string
+          user_id: string | null
         }
         Insert: {
           barcode?: string | null
@@ -657,6 +716,8 @@ export type Database = {
           created_at?: string
           id?: string
           image_url?: string | null
+          is_archived?: boolean
+          low_stock_threshold?: number
           name: string
           quantity?: number
           reorder_level?: number
@@ -665,6 +726,7 @@ export type Database = {
           sku: string
           supplier?: string | null
           updated_at?: string
+          user_id?: string | null
         }
         Update: {
           barcode?: string | null
@@ -676,6 +738,8 @@ export type Database = {
           created_at?: string
           id?: string
           image_url?: string | null
+          is_archived?: boolean
+          low_stock_threshold?: number
           name?: string
           quantity?: number
           reorder_level?: number
@@ -684,6 +748,7 @@ export type Database = {
           sku?: string
           supplier?: string | null
           updated_at?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -704,6 +769,7 @@ export type Database = {
           display_name: string | null
           email_verified: boolean
           id: string
+          onboarding_completed: boolean
           phone: string | null
           phone_verified: boolean
           title: string | null
@@ -718,6 +784,7 @@ export type Database = {
           display_name?: string | null
           email_verified?: boolean
           id?: string
+          onboarding_completed?: boolean
           phone?: string | null
           phone_verified?: boolean
           title?: string | null
@@ -732,6 +799,7 @@ export type Database = {
           display_name?: string | null
           email_verified?: boolean
           id?: string
+          onboarding_completed?: boolean
           phone?: string | null
           phone_verified?: boolean
           title?: string | null
@@ -1212,9 +1280,23 @@ export type Database = {
         Returns: boolean
       }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      ensure_business_workspace_membership: {
+        Args: {
+          _business_id: string
+          _display_name?: string
+          _phone?: string
+        }
+        Returns: string
+      }
     }
     Enums: {
-      app_role: "admin" | "staff" | "manager" | "super_admin"
+      app_role:
+        | "admin"
+        | "staff"
+        | "manager"
+        | "super_admin"
+        | "salesperson"
+        | "distributor"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -1342,7 +1424,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "staff", "manager", "super_admin"],
+      app_role: ["admin", "staff", "manager", "super_admin", "salesperson", "distributor"],
     },
   },
 } as const

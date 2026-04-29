@@ -238,7 +238,7 @@ export default function Dashboard() {
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
   const { business } = useBusiness();
-  const { isAdmin, isManager, displayName } = useAuth();
+  const { isAdmin, isManager, displayName, onboardingCompleted } = useAuth();
   const [data, setData] = useState<DashboardData>({
     sales: [],
     saleItems: [],
@@ -303,7 +303,7 @@ export default function Dashboard() {
     };
   }, [fetchDashboard]);
 
-  const setupRequired = (!!business && data.products.length === 0) || !business;
+  const setupRequired = !business || !onboardingCompleted;
 
   useEffect(() => {
     if (!setupRequired) {

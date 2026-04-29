@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { BUSINESS_TYPES, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ensureUserBusinessWorkspace, getErrorMessage, logSupabaseError } from '@/lib/workspace';
 
 type SetupStep = 'business' | 'opening_stock' | 'confirm';
 
@@ -178,29 +179,28 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
     setSubmitting(true);
 
     try {
-      let businessId = business?.id ?? null;
       const trimmedBusinessName = businessName.trim();
       const trimmedPhone = phoneNumber.trim();
       const trimmedLocation = location.trim();
-
-      if (!businessId) {
-        const { data, error } = await supabase.rpc('create_business_for_owner', {
-          _name: trimmedBusinessName,
-          _email: user.email ?? '',
-          _phone: trimmedPhone,
-          _location: trimmedLocation,
-          _employees: 1,
-          _logo_light_url: '',
-          _logo_dark_url: '',
-        });
-        if (error) throw error;
-        if (!data) throw new Error('Business setup did not return an id.');
-        businessId = data;
-      }
+      const businessId = await ensureUserBusinessWorkspace({
+        existingBusinessId: business?.id ?? null,
+        user,
+        displayName: displayName || user.email || trimmedBusinessName,
+        businessName: trimmedBusinessName,
+        phone: trimmedPhone,
+        location: trimmedLocation,
+      });
 
       let logoUrl: string | null = business?.logo_light_url || null;
       if (businessLogoFile && businessId) {
-        logoUrl = await uploadBusinessLogo(businessId, businessLogoFile);
+        try {
+          logoUrl = await uploadBusinessLogo(businessId, businessLogoFile);
+        } catch (logoError) {
+          logSupabaseError('onboarding.businessLogoUpload', logoError, {
+            businessId,
+            fileName: businessLogoFile.name,
+          });
+        }
       }
 
       const { error: businessError } = await supabase
@@ -221,9 +221,11 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
       const { error: profileError } = await supabase
         .from('profiles')
         .update({
+          business_id: businessId,
           display_name: displayName || user.email || trimmedBusinessName,
           phone: trimmedPhone,
           email_verified: true,
+          onboarding_completed: false,
         } as never)
         .eq('user_id', user.id);
       if (profileError) throw profileError;
@@ -239,6 +241,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
             .from('products')
             .insert({
               business_id: businessId,
+              user_id: user.id,
               name: row.name.trim(),
               sku: generateSetupSku(row.name),
               category: row.category.trim(),
@@ -253,10 +256,21 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
             .single();
           if (productError) throw productError;
 
-          let imageUrl = '';
           if (row.imageFile) {
-            imageUrl = await uploadProductImage(businessId, createdProduct.id, row.imageFile);
-            await supabase.from('products').update({ image_url: imageUrl } as never).eq('id', createdProduct.id);
+            try {
+              const imageUrl = await uploadProductImage(businessId, createdProduct.id, row.imageFile);
+              const { error: imageUpdateError } = await supabase
+                .from('products')
+                .update({ image_url: imageUrl } as never)
+                .eq('id', createdProduct.id);
+              if (imageUpdateError) throw imageUpdateError;
+            } catch (imageError) {
+              logSupabaseError('onboarding.productImageUpload', imageError, {
+                businessId,
+                productId: createdProduct.id,
+                productName: row.name.trim(),
+              });
+            }
           }
 
           const { error: movementError } = await supabase.from('stock_movements' as any).insert({
@@ -272,9 +286,18 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
             created_by_name: displayName || user.email || trimmedBusinessName,
             movement_date: new Date().toISOString(),
           });
-          if (movementError) throw movementError;
+          if (movementError) {
+            await supabase.from('products').delete().eq('id', createdProduct.id);
+            throw movementError;
+          }
         }
       }
+
+      const { error: completionError } = await supabase
+        .from('profiles')
+        .update({ onboarding_completed: true } as never)
+        .eq('user_id', user.id);
+      if (completionError) throw completionError;
 
       await Promise.all([refreshProfile(), refreshBusiness(), refreshSubscription()]);
       toast({
@@ -286,9 +309,14 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
       onCompleted?.();
       onOpenChange(false);
     } catch (error: unknown) {
+      logSupabaseError('onboarding.finishSetup', error, {
+        userId: user.id,
+        hasOpeningStock,
+        openingStockCount: activeProducts.length,
+      });
       toast({
         title: 'Could not finish setup',
-        description: error instanceof Error ? error.message : 'Please try again.',
+        description: getErrorMessage(error),
         variant: 'destructive',
       });
     } finally {
@@ -298,8 +326,8 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl gap-0 overflow-hidden p-0">
-        <DialogHeader className="border-b border-border px-6 py-5">
+      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="flex-none border-b border-border px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Fresh setup</p>
@@ -326,9 +354,9 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
           </div>
         </DialogHeader>
 
-        <div className="space-y-6 px-6 py-6">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5 pb-28">
           {currentStep === 'business' && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="rounded-2xl bg-primary/10 p-3 text-primary">
                   <Store className="h-5 w-5" />
@@ -339,7 +367,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
                 </div>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="setup-business-name">Business Name</Label>
                   <Input id="setup-business-name" value={businessName} onChange={(event) => setBusinessName(event.target.value)} placeholder="e.g. Maggs Trove" />
@@ -377,7 +405,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
           )}
 
           {currentStep === 'opening_stock' && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="rounded-2xl bg-primary/10 p-3 text-primary">
                   <Warehouse className="h-5 w-5" />
@@ -413,10 +441,10 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
               </div>
 
               {hasOpeningStock === 'yes' ? (
-                <div className="space-y-4">
+                <div className="space-y-3">
                   {openingStockProducts.map((product, index) => (
                     <Card key={product.id} className="border-border/70">
-                      <CardContent className="space-y-4 p-4">
+                      <CardContent className="space-y-3 p-4">
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-sm font-semibold">Opening Stock Item {index + 1}</p>
@@ -429,7 +457,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
                           ) : null}
                         </div>
 
-                        <div className="grid gap-4 md:grid-cols-2">
+                        <div className="grid gap-3 md:grid-cols-2">
                           <div className="space-y-2 md:col-span-2">
                             <Label>Product Name</Label>
                             <Input value={product.name} onChange={(event) => setProductField(product.id, 'name', event.target.value)} placeholder="e.g. Plain T-Shirt" />
@@ -483,7 +511,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
           )}
 
           {currentStep === 'confirm' && (
-            <div className="space-y-5">
+            <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <div className="rounded-2xl bg-primary/10 p-3 text-primary">
                   <CheckCircle2 className="h-5 w-5" />
@@ -494,7 +522,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-2">
                 <Card>
                   <CardContent className="space-y-2 p-4">
                     <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Business</p>
@@ -524,7 +552,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-border px-6 py-4">
+        <div className="sticky bottom-0 z-10 flex items-center justify-between border-t border-border bg-background/95 px-6 py-4 backdrop-blur-sm">
           <Button type="button" variant="ghost" onClick={stepIndex === 0 ? () => onOpenChange(false) : goBack} disabled={submitting}>
             {stepIndex === 0 ? 'Later' : 'Back'}
           </Button>

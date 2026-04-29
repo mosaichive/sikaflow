@@ -33,8 +33,8 @@ export function AppLayout({ children, title }: { children: ReactNode; title?: st
 
     const loadAnnouncementBadge = async () => {
       const [{ data: announcements }, { data: reads }] = await Promise.all([
-        supabase.from('business_announcements' as any).select('id').eq('active', true),
-        supabase.from('business_announcement_reads' as any).select('announcement_id').eq('user_id', user.id).eq('business_id', businessId),
+        supabase.from('platform_announcements' as any).select('id').eq('active', true),
+        supabase.from('platform_announcement_reads' as any).select('announcement_id').eq('user_id', user.id).eq('business_id', businessId),
       ]);
 
       if (cancelled) return;
@@ -48,8 +48,8 @@ export function AppLayout({ children, title }: { children: ReactNode; title?: st
 
     const channel = supabase
       .channel(`app-layout-announcements-${businessId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'business_announcements' }, () => { void loadAnnouncementBadge(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'business_announcement_reads' }, () => { void loadAnnouncementBadge(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_announcements' }, () => { void loadAnnouncementBadge(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'platform_announcement_reads' }, () => { void loadAnnouncementBadge(); })
       .subscribe();
 
     return () => {

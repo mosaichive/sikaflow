@@ -8,15 +8,15 @@ import { LayoutDashboard, Building2, CreditCard, Receipt, Megaphone, ShieldAlert
 import { BrandLoader } from '@/components/BrandLoader';
 
 const NAV = [
-  { to: '/platform', label: 'Overview', icon: LayoutDashboard, end: true },
-  { to: '/platform/businesses', label: 'Businesses', icon: Building2 },
-  { to: '/platform/subscriptions', label: 'Subscriptions', icon: CreditCard },
-  { to: '/platform/payments', label: 'Payments', icon: Receipt },
-  { to: '/platform/payment-methods', label: 'Payment Methods', icon: Wallet },
-  { to: '/platform/referrals', label: 'Referrals', icon: Gift },
-  { to: '/platform/ads', label: 'Ads', icon: ImagePlus },
-  { to: '/platform/support', label: 'Support', icon: LifeBuoy },
-  { to: '/platform/announcements', label: 'Announcements', icon: Megaphone },
+  { to: '/super-admin', label: 'Overview', icon: LayoutDashboard, end: true },
+  { to: '/super-admin/businesses', label: 'Businesses', icon: Building2 },
+  { to: '/super-admin/subscriptions', label: 'Subscriptions', icon: CreditCard },
+  { to: '/super-admin/payments', label: 'Payments', icon: Receipt },
+  { to: '/super-admin/payment-methods', label: 'Payment Methods', icon: Wallet },
+  { to: '/super-admin/referrals', label: 'Referrals', icon: Gift },
+  { to: '/super-admin/ads', label: 'Ads', icon: ImagePlus },
+  { to: '/super-admin/support', label: 'Support', icon: LifeBuoy },
+  { to: '/super-admin/announcements', label: 'Announcements', icon: Megaphone },
 ];
 
 export default function PlatformLayout() {
