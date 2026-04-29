@@ -24,6 +24,7 @@ import { SaleDocumentViewerDialog } from '@/components/sales/SaleDocumentViewerD
 import {
   deleteStockMovementsBySourceCompat,
   insertStockMovementCompat,
+  loadProductsCompat,
   logSupabaseError,
 } from '@/lib/workspace';
 
@@ -99,7 +100,7 @@ export default function SalesPage() {
   }, [historyDateFrom, historyDateTo]);
 
   const fetchAllProducts = async () => {
-    const { data } = await supabase.from('products').select('*').eq('is_archived', false).order('name');
+    const data = await loadProductsCompat(false);
     setAllProducts(data || []);
     setProducts((data || []).filter((p: any) => p.quantity > 0));
   };

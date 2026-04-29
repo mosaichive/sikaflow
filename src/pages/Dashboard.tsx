@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatCurrency, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { calculateDashboardTotals, getPaidAmount, getIsoDate, normalizeText, sumTodaySales, toNumber } from '@/lib/sales-inventory';
 import { cn } from '@/lib/utils';
+import { loadProductsCompat } from '@/lib/workspace';
 
 type SaleRow = {
   id: string;
@@ -270,7 +271,7 @@ export default function Dashboard() {
     const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes] = await Promise.all([
       supabase.from('sales').select('*').order('sale_date', { ascending: false }),
       supabase.from('sale_items').select('*'),
-      supabase.from('products').select('*').eq('is_archived', false).order('name'),
+      loadProductsCompat(false),
       supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
       supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
       supabase.from('savings').select('amount,savings_date'),
@@ -280,7 +281,7 @@ export default function Dashboard() {
     setData({
       sales: (salesRes.data || []) as SaleRow[],
       saleItems: (saleItemsRes.data || []) as SaleItemRow[],
-      products: (productsRes.data || []) as ProductRow[],
+      products: (Array.isArray(productsRes) ? productsRes : []) as ProductRow[],
       expenses: (expensesRes.data || []) as ExpenseRow[],
       otherIncome: (otherIncomeRes.data || []) as OtherIncomeRow[],
       savings: (savingsRes.data || []) as SavingsRow[],

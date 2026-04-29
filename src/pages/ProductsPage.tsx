@@ -168,10 +168,12 @@ export default function ProductsPage() {
 
       if (editing) {
         await updateProductRecord(editing.id, payload);
+        let nextImageUrl = editing.image_url ?? null;
 
         if (imageFile) {
           try {
             const imageUrl = await uploadProductImage(activeBusinessId, editing.id, imageFile);
+            nextImageUrl = imageUrl;
             const { error: imageUpdateError } = await supabase
               .from('products')
               .update({ image_url: imageUrl } as never)
@@ -186,13 +188,26 @@ export default function ProductsPage() {
           }
         }
 
+        setRows((current) =>
+          current.map((row) =>
+            row.id === editing.id
+              ? {
+                  ...row,
+                  ...payload,
+                  image_url: nextImageUrl,
+                }
+              : row,
+          ),
+        );
         toast({ title: 'Product updated', description: imageWarning || undefined });
       } else {
         const created = await createProductRecord(payload);
+        let nextImageUrl: string | null = null;
 
         if (imageFile) {
           try {
             const imageUrl = await uploadProductImage(activeBusinessId, created.id, imageFile);
+            nextImageUrl = imageUrl;
             const { error: imageUpdateError } = await supabase
               .from('products')
               .update({ image_url: imageUrl } as never)
@@ -233,6 +248,24 @@ export default function ProductsPage() {
           }
         }
 
+        setRows((current) => {
+          const nextRow: ProductRow = {
+            id: created.id,
+            name: payload.name,
+            category: payload.category,
+            sku: payload.sku,
+            quantity: Number(payload.quantity ?? 0),
+            cost_price: Number(payload.cost_price ?? 0),
+            selling_price: Number(payload.selling_price ?? 0),
+            low_stock_threshold: Number(payload.low_stock_threshold ?? payload.reorder_level ?? 0),
+            reorder_level: Number(payload.reorder_level ?? payload.low_stock_threshold ?? 0),
+            image_url: nextImageUrl,
+            is_archived: false,
+          };
+
+          const withoutDuplicate = current.filter((row) => row.id !== nextRow.id);
+          return [nextRow, ...withoutDuplicate].sort((left, right) => left.name.localeCompare(right.name));
+        });
         toast({
           title: 'Product added',
           description: imageWarning || (quantity > 0 ? 'Opening stock was recorded too.' : 'Add stock later from Inventory.'),

@@ -269,7 +269,14 @@ export async function loadProductsCompat(showArchived: boolean) {
   }
 
   const { data, error } = await baseQuery().eq('is_archived', false);
-  if (!error) return data ?? [];
+  if (!error) {
+    const rows = (data ?? []) as Array<{ is_archived?: boolean | null }>;
+    if (rows.length > 0) return rows;
+
+    const { data: fallbackData, error: fallbackError } = await baseQuery();
+    if (fallbackError) throw fallbackError;
+    return ((fallbackData ?? []) as Array<{ is_archived?: boolean | null }>).filter((row) => row.is_archived !== true);
+  }
   if (!isMissingColumnError(error, 'is_archived', 'products')) throw error;
 
   logSupabaseError('workspace.loadProductsCompat', error, {
