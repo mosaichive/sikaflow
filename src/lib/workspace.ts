@@ -20,6 +20,20 @@ type EnsureWorkspaceInput = {
   allowCreate?: boolean;
 };
 
+function isMissingFunctionError(error: unknown) {
+  const normalized = (error ?? {}) as SupabaseErrorLike;
+  const message = normalized.message?.toLowerCase() ?? '';
+  const details = normalized.details?.toLowerCase() ?? '';
+  const code = normalized.code?.toUpperCase() ?? '';
+
+  return (
+    code === 'PGRST202'
+    || message.includes('could not find the function')
+    || details.includes('could not find the function')
+    || message.includes('schema cache')
+  );
+}
+
 export function getErrorMessage(error: unknown, fallback = 'Please try again.') {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string') {
@@ -51,6 +65,34 @@ export async function resolveCurrentBusinessId(userId: string) {
   return ((data as any)?.business_id as string | null) ?? null;
 }
 
+async function fallbackProfileMembership({
+  businessId,
+  userId,
+  displayName,
+  email,
+  phone,
+}: {
+  businessId: string;
+  userId: string;
+  displayName?: string;
+  email?: string | null;
+  phone?: string;
+}) {
+  const profilePayload = {
+    user_id: userId,
+    business_id: businessId,
+    display_name: displayName?.trim() || email?.split('@')[0]?.trim() || 'User',
+    phone: phone?.trim() || null,
+  };
+
+  const { error } = await supabase
+    .from('profiles')
+    .upsert(profilePayload as never, { onConflict: 'user_id' });
+
+  if (error) throw error;
+  return businessId;
+}
+
 export async function ensureUserBusinessWorkspace({
   existingBusinessId,
   user,
@@ -67,7 +109,22 @@ export async function ensureUserBusinessWorkspace({
       _phone: phone?.trim() || '',
     });
 
-    if (error) throw error;
+    if (error) {
+      if (isMissingFunctionError(error)) {
+        logSupabaseError('workspace.ensureMembershipFallback', error, {
+          businessId,
+          userId: user.id,
+        });
+        return fallbackProfileMembership({
+          businessId,
+          userId: user.id,
+          displayName,
+          email: user.email,
+          phone,
+        });
+      }
+      throw error;
+    }
     return (data as string | null) || businessId;
   };
 
