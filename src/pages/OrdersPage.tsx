@@ -15,6 +15,7 @@ import { useBusiness } from '@/context/BusinessContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency, ORDER_STATUSES, PAYMENT_METHODS } from '@/lib/constants';
 import { ClipboardList, Plus, Truck } from 'lucide-react';
+import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
 
 type ProductRow = {
   id: string;
@@ -93,16 +94,42 @@ export default function OrdersPage() {
   const canManageStatus = isAdmin || isManager || isSalesperson;
 
   const load = useCallback(async () => {
-    const [productsRes, ordersRes, itemsRes] = await Promise.all([
-      supabase.from('products').select('id,name,sku,quantity,selling_price,cost_price').eq('is_archived', false).order('name'),
+    const [productsRes, ordersRes, itemsRes] = await Promise.allSettled([
+      loadProductsCompat(false, businessId),
       supabase.from('orders' as any).select('*').order('order_date', { ascending: false }),
       supabase.from('order_items' as any).select('*'),
     ]);
 
-    setProducts((productsRes.data || []) as ProductRow[]);
-    setOrders((ordersRes.data || []) as OrderRow[]);
-    setOrderItems((itemsRes.data || []) as OrderItemRow[]);
-  }, []);
+    if (productsRes.status === 'fulfilled') {
+      setProducts(
+        (productsRes.value || []).map((row: any) => ({
+          id: row.id,
+          name: row.name,
+          sku: row.sku,
+          quantity: row.quantity,
+          selling_price: row.selling_price,
+          cost_price: row.cost_price,
+        })) as ProductRow[],
+      );
+    } else {
+      logSupabaseError('orders.load.products', productsRes.reason, { businessId });
+      setProducts([]);
+    }
+
+    setOrders(
+      ordersRes.status === 'fulfilled'
+        ? ((ordersRes.value.data || []) as OrderRow[])
+        : [],
+    );
+    setOrderItems(
+      itemsRes.status === 'fulfilled'
+        ? ((itemsRes.value.data || []) as OrderItemRow[])
+        : [],
+    );
+
+    if (ordersRes.status === 'rejected') logSupabaseError('orders.load.orders', ordersRes.reason, { businessId });
+    if (itemsRes.status === 'rejected') logSupabaseError('orders.load.orderItems', itemsRes.reason, { businessId });
+  }, [businessId]);
 
   useEffect(() => {
     void load();

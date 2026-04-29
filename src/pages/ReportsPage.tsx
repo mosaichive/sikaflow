@@ -25,6 +25,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { BarChart3, CalendarRange, Download, FileText, FilterX, PackageSearch, Receipt, TrendingUp, WalletCards } from 'lucide-react';
 import { buildReportStatement, downloadReportSlipPdf } from '@/lib/report-slip';
+import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
 
 type RawReportData = {
   sales: any[];
@@ -124,7 +125,7 @@ export default function ReportsPage() {
   const now = useMemo(() => new Date(), []);
   const currentYear = String(now.getFullYear());
   const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
-  const { business } = useBusiness();
+  const { business, businessId } = useBusiness();
   const { displayName, user } = useAuth();
   const { toast } = useToast();
 
@@ -157,7 +158,7 @@ export default function ReportsPage() {
 
   const fetchReport = useCallback(async () => {
     setLoading(true);
-    const [salesRes, itemsRes, expRes, savRes, invRes, funRes, restockRes, otherIncomeRes, productsRes] = await Promise.all([
+    const [salesRes, itemsRes, expRes, savRes, invRes, funRes, restockRes, otherIncomeRes, productsRes] = await Promise.allSettled([
       supabase.from('sales').select('*').order('sale_date', { ascending: false }),
       supabase.from('sale_items').select('*'),
       supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
@@ -166,22 +167,31 @@ export default function ReportsPage() {
       supabase.from('investor_funding').select('*').order('date_received', { ascending: false }),
       supabase.from('restocks').select('*').order('restock_date', { ascending: false }),
       supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
-      supabase.from('products').select('*').eq('is_archived', false).order('name'),
+      loadProductsCompat(false, businessId),
     ]);
 
     setRaw({
-      sales: salesRes.data ?? [],
-      saleItems: itemsRes.data ?? [],
-      expenses: expRes.data ?? [],
-      savings: savRes.data ?? [],
-      investments: invRes.data ?? [],
-      funding: funRes.data ?? [],
-      restocks: restockRes.data ?? [],
-      otherIncome: otherIncomeRes.data ?? [],
-      products: productsRes.data ?? [],
+      sales: salesRes.status === 'fulfilled' ? (salesRes.value.data ?? []) : [],
+      saleItems: itemsRes.status === 'fulfilled' ? (itemsRes.value.data ?? []) : [],
+      expenses: expRes.status === 'fulfilled' ? (expRes.value.data ?? []) : [],
+      savings: savRes.status === 'fulfilled' ? (savRes.value.data ?? []) : [],
+      investments: invRes.status === 'fulfilled' ? (invRes.value.data ?? []) : [],
+      funding: funRes.status === 'fulfilled' ? (funRes.value.data ?? []) : [],
+      restocks: restockRes.status === 'fulfilled' ? (restockRes.value.data ?? []) : [],
+      otherIncome: otherIncomeRes.status === 'fulfilled' ? (otherIncomeRes.value.data ?? []) : [],
+      products: productsRes.status === 'fulfilled' ? (productsRes.value ?? []) : [],
     });
+    if (salesRes.status === 'rejected') logSupabaseError('reports.load.sales', salesRes.reason, { businessId });
+    if (itemsRes.status === 'rejected') logSupabaseError('reports.load.saleItems', itemsRes.reason, { businessId });
+    if (expRes.status === 'rejected') logSupabaseError('reports.load.expenses', expRes.reason, { businessId });
+    if (savRes.status === 'rejected') logSupabaseError('reports.load.savings', savRes.reason, { businessId });
+    if (invRes.status === 'rejected') logSupabaseError('reports.load.investments', invRes.reason, { businessId });
+    if (funRes.status === 'rejected') logSupabaseError('reports.load.investorFunding', funRes.reason, { businessId });
+    if (restockRes.status === 'rejected') logSupabaseError('reports.load.restocks', restockRes.reason, { businessId });
+    if (otherIncomeRes.status === 'rejected') logSupabaseError('reports.load.otherIncome', otherIncomeRes.reason, { businessId });
+    if (productsRes.status === 'rejected') logSupabaseError('reports.load.products', productsRes.reason, { businessId });
     setLoading(false);
-  }, []);
+  }, [businessId]);
 
   useEffect(() => {
     void fetchReport();
