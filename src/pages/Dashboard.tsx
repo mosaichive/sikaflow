@@ -15,7 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatCurrency, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { calculateDashboardTotals, getPaidAmount, getIsoDate, normalizeText, sumTodaySales, toNumber } from '@/lib/sales-inventory';
 import { cn } from '@/lib/utils';
-import { loadProductsCompat } from '@/lib/workspace';
+import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
 
 type SaleRow = {
   id: string;
@@ -269,26 +269,44 @@ export default function Dashboard() {
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
-    const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes] = await Promise.all([
-      supabase.from('sales').select('*').order('sale_date', { ascending: false }),
-      supabase.from('sale_items').select('*'),
-      loadProductsCompat(false, businessId),
-      supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
-      supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
-      supabase.from('savings').select('amount,savings_date'),
-      supabase.from('investments').select('amount,investment_date'),
-    ]);
+    try {
+      const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes] = await Promise.allSettled([
+        supabase.from('sales').select('*').order('sale_date', { ascending: false }),
+        supabase.from('sale_items').select('*'),
+        loadProductsCompat(false, businessId),
+        supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
+        supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
+        supabase.from('savings').select('amount,savings_date'),
+        supabase.from('investments').select('amount,investment_date'),
+      ]);
 
-    setData({
-      sales: (salesRes.data || []) as SaleRow[],
-      saleItems: (saleItemsRes.data || []) as SaleItemRow[],
-      products: (Array.isArray(productsRes) ? productsRes : []) as ProductRow[],
-      expenses: (expensesRes.data || []) as ExpenseRow[],
-      otherIncome: (otherIncomeRes.data || []) as OtherIncomeRow[],
-      savings: (savingsRes.data || []) as SavingsRow[],
-      investments: (investmentsRes.data || []) as InvestmentRow[],
-    });
-    setLoading(false);
+      if (salesRes.status === 'rejected') logSupabaseError('dashboard.load.sales', salesRes.reason);
+      if (saleItemsRes.status === 'rejected') logSupabaseError('dashboard.load.saleItems', saleItemsRes.reason);
+      if (productsRes.status === 'rejected') logSupabaseError('dashboard.load.products', productsRes.reason);
+      if (expensesRes.status === 'rejected') logSupabaseError('dashboard.load.expenses', expensesRes.reason);
+      if (otherIncomeRes.status === 'rejected') logSupabaseError('dashboard.load.otherIncome', otherIncomeRes.reason);
+      if (savingsRes.status === 'rejected') logSupabaseError('dashboard.load.savings', savingsRes.reason);
+      if (investmentsRes.status === 'rejected') logSupabaseError('dashboard.load.investments', investmentsRes.reason);
+
+      if (salesRes.status === 'fulfilled' && salesRes.value.error) logSupabaseError('dashboard.load.sales', salesRes.value.error);
+      if (saleItemsRes.status === 'fulfilled' && saleItemsRes.value.error) logSupabaseError('dashboard.load.saleItems', saleItemsRes.value.error);
+      if (expensesRes.status === 'fulfilled' && expensesRes.value.error) logSupabaseError('dashboard.load.expenses', expensesRes.value.error);
+      if (otherIncomeRes.status === 'fulfilled' && otherIncomeRes.value.error) logSupabaseError('dashboard.load.otherIncome', otherIncomeRes.value.error);
+      if (savingsRes.status === 'fulfilled' && savingsRes.value.error) logSupabaseError('dashboard.load.savings', savingsRes.value.error);
+      if (investmentsRes.status === 'fulfilled' && investmentsRes.value.error) logSupabaseError('dashboard.load.investments', investmentsRes.value.error);
+
+      setData({
+        sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as SaleRow[]) : [],
+        saleItems: saleItemsRes.status === 'fulfilled' ? ((saleItemsRes.value.data || []) as SaleItemRow[]) : [],
+        products: productsRes.status === 'fulfilled' ? ((Array.isArray(productsRes.value) ? productsRes.value : []) as ProductRow[]) : [],
+        expenses: expensesRes.status === 'fulfilled' ? ((expensesRes.value.data || []) as ExpenseRow[]) : [],
+        otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as OtherIncomeRow[]) : [],
+        savings: savingsRes.status === 'fulfilled' ? ((savingsRes.value.data || []) as SavingsRow[]) : [],
+        investments: investmentsRes.status === 'fulfilled' ? ((investmentsRes.value.data || []) as InvestmentRow[]) : [],
+      });
+    } finally {
+      setLoading(false);
+    }
   }, [businessId]);
 
   useEffect(() => {
