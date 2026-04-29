@@ -14,7 +14,14 @@ import { useBusiness } from '@/context/BusinessContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency } from '@/lib/constants';
 import { Package, Plus, Search, Pencil, Trash2, ArchiveRestore, Archive } from 'lucide-react';
-import { ensureUserBusinessWorkspace, getErrorMessage, logSupabaseError } from '@/lib/workspace';
+import {
+  createProductRecord,
+  ensureUserBusinessWorkspace,
+  getErrorMessage,
+  loadProductsCompat,
+  logSupabaseError,
+  updateProductRecord,
+} from '@/lib/workspace';
 
 type ProductRow = {
   id: string;
@@ -62,9 +69,8 @@ export default function ProductsPage() {
   const canManage = isAdmin || isManager;
 
   const load = useCallback(async () => {
-    const query = supabase.from('products').select('*').order('name');
-    const { data } = showArchived ? await query : await query.eq('is_archived', false);
-    setRows((data || []) as ProductRow[]);
+    const data = await loadProductsCompat(showArchived);
+    setRows(data as ProductRow[]);
   }, [showArchived]);
 
   useEffect(() => {
@@ -160,8 +166,7 @@ export default function ProductsPage() {
       };
 
       if (editing) {
-        const { error } = await supabase.from('products').update(payload as never).eq('id', editing.id);
-        if (error) throw error;
+        await updateProductRecord(editing.id, payload);
 
         if (imageFile) {
           try {
@@ -182,8 +187,7 @@ export default function ProductsPage() {
 
         toast({ title: 'Product updated', description: imageWarning || undefined });
       } else {
-        const { data: created, error } = await supabase.from('products').insert(payload as never).select('id').single();
-        if (error) throw error;
+        const created = await createProductRecord(payload);
 
         if (imageFile) {
           try {

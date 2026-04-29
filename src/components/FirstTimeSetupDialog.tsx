@@ -13,7 +13,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { BUSINESS_TYPES, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { ensureUserBusinessWorkspace, getErrorMessage, logSupabaseError } from '@/lib/workspace';
+import {
+  createProductRecord,
+  ensureUserBusinessWorkspace,
+  getErrorMessage,
+  logSupabaseError,
+  updateBusinessWorkspaceRecord,
+  updateProfileRecord,
+} from '@/lib/workspace';
 
 type SetupStep = 'business' | 'opening_stock' | 'confirm';
 
@@ -203,9 +210,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
         }
       }
 
-      const { error: businessError } = await supabase
-        .from('businesses')
-        .update({
+      await updateBusinessWorkspaceRecord(businessId, {
           name: trimmedBusinessName,
           business_type: businessType,
           phone: trimmedPhone,
@@ -214,21 +219,15 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
           logo_dark_url: logoUrl,
           status: 'active',
           email_verified: true,
-        } as never)
-        .eq('id', businessId);
-      if (businessError) throw businessError;
+        });
 
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
+      await updateProfileRecord(user.id, {
           business_id: businessId,
           display_name: displayName || user.email || trimmedBusinessName,
           phone: trimmedPhone,
           email_verified: true,
           onboarding_completed: false,
-        } as never)
-        .eq('user_id', user.id);
-      if (profileError) throw profileError;
+        });
 
       if (hasOpeningStock === 'yes' && activeProducts.length > 0) {
         for (const row of activeProducts) {
@@ -237,9 +236,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
           const sellingPrice = Number(row.sellingPrice);
           const lowStockThreshold = Number(row.lowStockThreshold || 0);
 
-          const { data: createdProduct, error: productError } = await supabase
-            .from('products')
-            .insert({
+          const createdProduct = await createProductRecord({
               business_id: businessId,
               user_id: user.id,
               name: row.name.trim(),
@@ -251,10 +248,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
               reorder_level: lowStockThreshold,
               low_stock_threshold: lowStockThreshold,
               is_archived: false,
-            } as never)
-            .select('id')
-            .single();
-          if (productError) throw productError;
+            });
 
           if (row.imageFile) {
             try {
@@ -293,11 +287,7 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
         }
       }
 
-      const { error: completionError } = await supabase
-        .from('profiles')
-        .update({ onboarding_completed: true } as never)
-        .eq('user_id', user.id);
-      if (completionError) throw completionError;
+      await updateProfileRecord(user.id, { onboarding_completed: true });
 
       await Promise.all([refreshProfile(), refreshBusiness(), refreshSubscription()]);
       toast({

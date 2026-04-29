@@ -34,6 +34,170 @@ function isMissingFunctionError(error: unknown) {
   );
 }
 
+function isMissingColumnError(error: unknown, columnName?: string, tableName?: string) {
+  const normalized = (error ?? {}) as SupabaseErrorLike;
+  const message = normalized.message?.toLowerCase() ?? '';
+  const details = normalized.details?.toLowerCase() ?? '';
+  const code = normalized.code?.toUpperCase() ?? '';
+  const targetColumn = columnName?.toLowerCase();
+  const targetTable = tableName?.toLowerCase();
+
+  const mentionsColumn =
+    !targetColumn
+    || message.includes(`'${targetColumn}'`)
+    || message.includes(`column "${targetColumn}"`)
+    || details.includes(`'${targetColumn}'`)
+    || details.includes(`column "${targetColumn}"`);
+
+  const mentionsTable =
+    !targetTable
+    || message.includes(`'${targetTable}'`)
+    || message.includes(`relation "${targetTable}"`)
+    || details.includes(`'${targetTable}'`)
+    || details.includes(`relation "${targetTable}"`);
+
+  return (
+    mentionsColumn
+    && mentionsTable
+    && (
+      code === 'PGRST204'
+      || code === '42703'
+      || message.includes('schema cache')
+      || message.includes('column')
+      || details.includes('schema cache')
+      || details.includes('column')
+    )
+  );
+}
+
+async function updateWithOptionalColumnFallback<T extends Record<string, unknown>>({
+  table,
+  matchColumn,
+  matchValue,
+  payload,
+  optionalColumns,
+  context,
+}: {
+  table: string;
+  matchColumn: string;
+  matchValue: string;
+  payload: T;
+  optionalColumns: string[];
+  context: string;
+}) {
+  const nextPayload: Record<string, unknown> = { ...payload };
+  const remainingColumns = [...optionalColumns];
+
+  while (true) {
+    const { error } = await supabase
+      .from(table as any)
+      .update(nextPayload as never)
+      .eq(matchColumn, matchValue);
+
+    if (!error) return;
+
+    const missingColumn = remainingColumns.find((column) => isMissingColumnError(error, column, table));
+    if (!missingColumn) throw error;
+
+    logSupabaseError(context, error, { table, missingColumn, fallbackMode: 'updateWithoutOptionalColumn' });
+    remainingColumns.splice(remainingColumns.indexOf(missingColumn), 1);
+    delete nextPayload[missingColumn];
+  }
+}
+
+export async function updateBusinessWorkspaceRecord(
+  businessId: string,
+  payload: Record<string, unknown>,
+) {
+  return updateWithOptionalColumnFallback({
+    table: 'businesses',
+    matchColumn: 'id',
+    matchValue: businessId,
+    payload,
+    optionalColumns: ['business_type'],
+    context: 'workspace.updateBusiness',
+  });
+}
+
+export async function updateProfileRecord(
+  userId: string,
+  payload: Record<string, unknown>,
+) {
+  return updateWithOptionalColumnFallback({
+    table: 'profiles',
+    matchColumn: 'user_id',
+    matchValue: userId,
+    payload,
+    optionalColumns: ['onboarding_completed'],
+    context: 'workspace.updateProfile',
+  });
+}
+
+export async function createProductRecord(
+  payload: Record<string, unknown>,
+) {
+  const nextPayload: Record<string, unknown> = { ...payload };
+  const remainingColumns = ['user_id', 'low_stock_threshold', 'is_archived'];
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('products')
+      .insert(nextPayload as never)
+      .select('id')
+      .single();
+
+    if (!error) return data as { id: string };
+
+    const missingColumn = remainingColumns.find((column) => isMissingColumnError(error, column, 'products'));
+    if (!missingColumn) throw error;
+
+    logSupabaseError('workspace.createProduct', error, {
+      table: 'products',
+      missingColumn,
+      fallbackMode: 'insertWithoutOptionalColumn',
+    });
+    remainingColumns.splice(remainingColumns.indexOf(missingColumn), 1);
+    delete nextPayload[missingColumn];
+  }
+}
+
+export async function updateProductRecord(
+  productId: string,
+  payload: Record<string, unknown>,
+) {
+  return updateWithOptionalColumnFallback({
+    table: 'products',
+    matchColumn: 'id',
+    matchValue: productId,
+    payload,
+    optionalColumns: ['user_id', 'low_stock_threshold', 'is_archived'],
+    context: 'workspace.updateProduct',
+  });
+}
+
+export async function loadProductsCompat(showArchived: boolean) {
+  const baseQuery = () => supabase.from('products').select('*').order('name');
+
+  if (showArchived) {
+    const { data, error } = await baseQuery();
+    if (error) throw error;
+    return data ?? [];
+  }
+
+  const { data, error } = await baseQuery().eq('is_archived', false);
+  if (!error) return data ?? [];
+  if (!isMissingColumnError(error, 'is_archived', 'products')) throw error;
+
+  logSupabaseError('workspace.loadProductsCompat', error, {
+    table: 'products',
+    missingColumn: 'is_archived',
+    fallbackMode: 'loadWithoutArchiveColumn',
+  });
+  const { data: fallbackData, error: fallbackError } = await baseQuery();
+  if (fallbackError) throw fallbackError;
+  return fallbackData ?? [];
+}
+
 export function getErrorMessage(error: unknown, fallback = 'Please try again.') {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === 'object' && error !== null && 'message' in error && typeof (error as any).message === 'string') {
