@@ -68,7 +68,7 @@ export default function InventoryPage() {
   const canManage = isAdmin || isManager;
 
   const load = useCallback(async () => {
-    const [productsRes, movementsRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.all([
+    const [productsRes, movementsRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.allSettled([
       loadProductsCompat(false),
       loadStockMovementsCompat(100),
       supabase.from('sales').select('total,amount_paid,payment_status,status'),
@@ -78,15 +78,34 @@ export default function InventoryPage() {
       supabase.from('other_income' as any).select('amount'),
     ]);
 
-    setProducts(productsRes as ProductRow[]);
-    setMovements(movementsRes as StockMovementRow[]);
+    if (productsRes.status === 'fulfilled') {
+      setProducts(productsRes.value as ProductRow[]);
+    } else {
+      logSupabaseError('inventory.load.products', productsRes.reason);
+      setProducts([]);
+    }
+
+    if (movementsRes.status === 'fulfilled') {
+      setMovements(movementsRes.value as StockMovementRow[]);
+    } else {
+      logSupabaseError('inventory.load.movements', movementsRes.reason);
+      setMovements([]);
+    }
+
     const money = calculateAvailableBusinessMoney({
-      sales: (salesRes.data || []) as any[],
-      otherIncome: (otherIncomeRes.data || []) as any[],
-      expenses: (expensesRes.data || []) as any[],
-      savings: (savingsRes.data || []) as any[],
-      investments: (investmentsRes.data || []) as any[],
+      sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as any[]) : [],
+      otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as any[]) : [],
+      expenses: expensesRes.status === 'fulfilled' ? ((expensesRes.value.data || []) as any[]) : [],
+      savings: savingsRes.status === 'fulfilled' ? ((savingsRes.value.data || []) as any[]) : [],
+      investments: investmentsRes.status === 'fulfilled' ? ((investmentsRes.value.data || []) as any[]) : [],
     });
+
+    if (salesRes.status === 'rejected') logSupabaseError('inventory.load.sales', salesRes.reason);
+    if (expensesRes.status === 'rejected') logSupabaseError('inventory.load.expenses', expensesRes.reason);
+    if (savingsRes.status === 'rejected') logSupabaseError('inventory.load.savings', savingsRes.reason);
+    if (investmentsRes.status === 'rejected') logSupabaseError('inventory.load.investments', investmentsRes.reason);
+    if (otherIncomeRes.status === 'rejected') logSupabaseError('inventory.load.otherIncome', otherIncomeRes.reason);
+
     setAvailableMoney(money.availableBusinessMoney);
   }, []);
 
