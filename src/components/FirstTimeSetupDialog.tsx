@@ -272,28 +272,36 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
             }
           }
 
-          const movementResult = await insertStockMovementCompat({
-            business_id: businessId,
-            product_id: createdProduct.id,
-            movement_type: 'opening_stock',
-            quantity_change: quantity,
-            quantity_after: quantity,
-            unit_cost: costPrice,
-            unit_price: sellingPrice,
-            note: 'Opening Stock',
-            created_by: user.id,
-            created_by_name: displayName || user.email || trimmedBusinessName,
-            movement_date: new Date().toISOString(),
-          });
-          if (movementResult.skipped) {
-            toast({
-              title: 'Opening stock saved',
-              description: 'Product setup completed. Inventory history will sync after database updates finish propagating.',
+          try {
+            const movementResult = await insertStockMovementCompat({
+              business_id: businessId,
+              product_id: createdProduct.id,
+              movement_type: 'opening_stock',
+              quantity_change: quantity,
+              quantity_after: quantity,
+              unit_cost: costPrice,
+              unit_price: sellingPrice,
+              note: 'Opening Stock',
+              created_by: user.id,
+              created_by_name: displayName || user.email || trimmedBusinessName,
+              movement_date: new Date().toISOString(),
             });
-          }
-          if (!movementResult.inserted && !movementResult.skipped) {
-            await supabase.from('products').delete().eq('id', createdProduct.id);
-            throw new Error('Could not record opening stock.');
+            if (movementResult.skipped) {
+              toast({
+                title: 'Opening stock saved',
+                description: 'Product setup completed. Inventory history will sync after database updates finish propagating.',
+              });
+            }
+          } catch (movementError) {
+            logSupabaseError('onboarding.openingStockMovement', movementError, {
+              businessId,
+              productId: createdProduct.id,
+              productName: row.name.trim(),
+            });
+            toast({
+              title: 'Product saved',
+              description: 'Opening stock history could not be recorded yet, but your product was created successfully.',
+            });
           }
         }
       }

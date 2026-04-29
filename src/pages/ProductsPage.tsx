@@ -208,24 +208,28 @@ export default function ProductsPage() {
         }
 
         if (quantity > 0) {
-          const movementResult = await insertStockMovementCompat({
-            business_id: activeBusinessId,
-            product_id: created.id,
-            movement_type: 'opening_stock',
-            quantity_change: quantity,
-            quantity_after: quantity,
-            unit_cost: Number(form.cost_price || 0),
-            unit_price: Number(form.selling_price || 0),
-            note: 'Opening Stock',
-            created_by: user.id,
-            created_by_name: displayName || user.email || '',
-          });
-          if (!movementResult.inserted && !movementResult.skipped) {
-            await supabase.from('products').delete().eq('id', created.id);
-            throw new Error('Could not record opening stock.');
-          }
-          if (movementResult.skipped) {
-            imageWarning = imageWarning || 'The product saved, but inventory history will sync after database updates finish propagating.';
+          try {
+            const movementResult = await insertStockMovementCompat({
+              business_id: activeBusinessId,
+              product_id: created.id,
+              movement_type: 'opening_stock',
+              quantity_change: quantity,
+              quantity_after: quantity,
+              unit_cost: Number(form.cost_price || 0),
+              unit_price: Number(form.selling_price || 0),
+              note: 'Opening Stock',
+              created_by: user.id,
+              created_by_name: displayName || user.email || '',
+            });
+            if (movementResult.skipped) {
+              imageWarning = imageWarning || 'The product saved, but inventory history will sync after database updates finish propagating.';
+            }
+          } catch (movementError) {
+            logSupabaseError('products.create.stockMovement', movementError, {
+              productId: created.id,
+              businessId: activeBusinessId,
+            });
+            imageWarning = imageWarning || 'The product saved, but opening stock history could not be recorded yet.';
           }
         }
 

@@ -20,6 +20,41 @@ type EnsureWorkspaceInput = {
   allowCreate?: boolean;
 };
 
+async function ensureBusinessRoleMembership({
+  businessId,
+  userId,
+}: {
+  businessId: string;
+  userId: string;
+}) {
+  const { data, error } = await supabase
+    .from('user_roles')
+    .select('role, business_id')
+    .eq('user_id', userId);
+
+  if (error) throw error;
+
+  const roles = (data || []) as Array<{ role: string; business_id: string | null }>;
+  if (roles.some((row) => row.business_id === businessId && (row.role === 'admin' || row.role === 'manager'))) {
+    return;
+  }
+  if (roles.some((row) => row.role === 'super_admin')) {
+    return;
+  }
+
+  const { error: insertError } = await supabase
+    .from('user_roles')
+    .insert({
+      user_id: userId,
+      role: 'admin' as any,
+      business_id: businessId,
+    } as never);
+
+  if (insertError && insertError.code !== '23505') {
+    throw insertError;
+  }
+}
+
 function isMissingFunctionError(error: unknown) {
   const normalized = (error ?? {}) as SupabaseErrorLike;
   const message = normalized.message?.toLowerCase() ?? '';
@@ -171,6 +206,20 @@ export async function updateProfileRecord(
 export async function createProductRecord(
   payload: Record<string, unknown>,
 ) {
+  const businessId = typeof payload.business_id === 'string' ? payload.business_id : null;
+  const userId = typeof payload.user_id === 'string' ? payload.user_id : null;
+
+  if (businessId && userId) {
+    try {
+      await ensureBusinessRoleMembership({ businessId, userId });
+    } catch (roleError) {
+      logSupabaseError('workspace.createProduct.ensureRoleMembership', roleError, {
+        businessId,
+        userId,
+      });
+    }
+  }
+
   const nextPayload: Record<string, unknown> = { ...payload };
   const remainingColumns = ['user_id', 'low_stock_threshold', 'is_archived'];
 
@@ -253,6 +302,25 @@ export async function loadStockMovementsCompat(limit = 100) {
 export async function insertStockMovementCompat(
   payload: Record<string, unknown>,
 ) {
+  const businessId = typeof payload.business_id === 'string' ? payload.business_id : null;
+  const userId =
+    typeof payload.created_by === 'string'
+      ? payload.created_by
+      : typeof payload.user_id === 'string'
+        ? payload.user_id
+        : null;
+
+  if (businessId && userId) {
+    try {
+      await ensureBusinessRoleMembership({ businessId, userId });
+    } catch (roleError) {
+      logSupabaseError('workspace.insertStockMovementCompat.ensureRoleMembership', roleError, {
+        businessId,
+        userId,
+      });
+    }
+  }
+
   const { error } = await supabase.from('stock_movements' as any).insert(payload);
 
   if (!error) {
@@ -348,6 +416,7 @@ async function fallbackProfileMembership({
     .upsert(profilePayload as never, { onConflict: 'user_id' });
 
   if (error) throw error;
+  await ensureBusinessRoleMembership({ businessId, userId });
   return businessId;
 }
 
@@ -383,6 +452,7 @@ export async function ensureUserBusinessWorkspace({
       }
       throw error;
     }
+    await ensureBusinessRoleMembership({ businessId, userId: user.id });
     return (data as string | null) || businessId;
   };
 
