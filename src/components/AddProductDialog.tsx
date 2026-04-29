@@ -5,9 +5,10 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import { useBusiness } from '@/context/BusinessContext';
+import { useAuth } from '@/context/AuthContext';
 import { CheckCircle2, PackagePlus } from 'lucide-react';
+import { createProductRecord, ensureUserBusinessWorkspace, rememberCachedProduct } from '@/lib/workspace';
 
 interface AddProductDialogProps {
   open: boolean;
@@ -32,6 +33,7 @@ function autoSku(name: string) {
 
 export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNext, onRestockNow }: AddProductDialogProps) {
   const { businessId } = useBusiness();
+  const { user, displayName } = useAuth();
   const { toast } = useToast();
   const [form, setForm] = useState(empty);
   const [loading, setLoading] = useState(false);
@@ -46,14 +48,30 @@ export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNe
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      toast({ title: 'Sign in required', variant: 'destructive' });
+      return;
+    }
     if (!businessId) {
       toast({ title: 'No business selected', variant: 'destructive' });
       return;
     }
     setLoading(true);
     const sku = form.sku.trim() || autoSku(form.name);
+    const activeBusinessId = await ensureUserBusinessWorkspace({
+      existingBusinessId: businessId,
+      user,
+      displayName: displayName || user.email || undefined,
+      allowCreate: false,
+    });
+    if (!activeBusinessId) {
+      setLoading(false);
+      toast({ title: 'Complete setup first', variant: 'destructive' });
+      return;
+    }
     const payload = {
-      business_id: businessId,
+      business_id: activeBusinessId,
+      user_id: user.id,
       name: form.name.trim(),
       sku,
       category: form.category.trim(),
@@ -64,18 +82,24 @@ export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNe
       reorder_level: Number(form.reorder_level) || 0,
       quantity: 0,
     };
-    const { data, error } = await supabase.from('products').insert(payload).select().single();
-    setLoading(false);
-    if (error) {
-      toast({ title: 'Error adding product', description: error.message, variant: 'destructive' });
-      return;
-    }
-    toast({ title: 'Product added successfully' });
-    onCreated?.(data);
-    if (offerRestockNext) {
-      setCreatedProduct(data);
-    } else {
-      onOpenChange(false);
+    try {
+      const created = await createProductRecord(payload);
+      const nextProduct = {
+        id: created.id,
+        ...payload,
+      };
+      rememberCachedProduct(activeBusinessId, nextProduct);
+      setLoading(false);
+      toast({ title: 'Product added successfully' });
+      onCreated?.(nextProduct);
+      if (offerRestockNext) {
+        setCreatedProduct(nextProduct);
+      } else {
+        onOpenChange(false);
+      }
+    } catch (error: any) {
+      setLoading(false);
+      toast({ title: 'Error adding product', description: error?.message || 'Please try again.', variant: 'destructive' });
     }
   };
 

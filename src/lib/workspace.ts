@@ -334,30 +334,34 @@ export async function updateProductRecord(
 }
 
 export async function loadProductsCompat(showArchived: boolean, businessId?: string | null) {
-  const baseQuery = () => {
+  const scopedBaseQuery = () => {
     let query = supabase.from('products').select('*').order('name');
     if (businessId) {
       query = query.eq('business_id', businessId);
     }
     return query;
   };
+  const visibleBaseQuery = () => supabase.from('products').select('*').order('name');
   const filterCachedRows = (rows: CachedProductRow[]) =>
     showArchived ? rows : rows.filter((row) => row.is_archived !== true);
   const getCachedRowsFallback = () => filterCachedRows(readCachedProducts(businessId));
 
   if (showArchived) {
-    const { data, error } = await baseQuery();
+    const { data, error } = await scopedBaseQuery();
     if (error) throw error;
-    const mergedRows = mergeProductRows(
-      (data ?? []) as CachedProductRow[],
-      readCachedProducts(businessId),
-      true,
-    );
+    let liveRows = (data ?? []) as CachedProductRow[];
+    if (liveRows.length === 0 && businessId) {
+      const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
+      if (!visibleError) {
+        liveRows = (visibleRows ?? []) as CachedProductRow[];
+      }
+    }
+    const mergedRows = mergeProductRows(liveRows, readCachedProducts(businessId), true);
     if (businessId && mergedRows.length > 0) writeCachedProducts(businessId, mergedRows);
     return mergedRows;
   }
 
-  const { data, error } = await baseQuery().eq('is_archived', false);
+  const { data, error } = await scopedBaseQuery().eq('is_archived', false);
   if (!error) {
     const rows = (data ?? []) as Array<{ is_archived?: boolean | null }>;
     if (rows.length > 0) {
@@ -370,7 +374,7 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
       return mergedRows;
     }
 
-    const { data: fallbackData, error: fallbackError } = await baseQuery();
+    const { data: fallbackData, error: fallbackError } = await scopedBaseQuery();
     if (fallbackError) throw fallbackError;
     const filteredRows = ((fallbackData ?? []) as Array<{ is_archived?: boolean | null }>).filter((row) => row.is_archived !== true) as CachedProductRow[];
     const mergedRows = mergeProductRows(filteredRows, readCachedProducts(businessId), false);
@@ -378,6 +382,22 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
       if (businessId) writeCachedProducts(businessId, mergedRows);
       return mergedRows;
     }
+
+    if (businessId) {
+      const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
+      if (!visibleError) {
+        const mergedVisibleRows = mergeProductRows(
+          ((visibleRows ?? []) as CachedProductRow[]).filter((row) => row.is_archived !== true),
+          readCachedProducts(businessId),
+          false,
+        );
+        if (mergedVisibleRows.length > 0) {
+          writeCachedProducts(businessId, mergedVisibleRows);
+          return mergedVisibleRows;
+        }
+      }
+    }
+
     return getCachedRowsFallback();
   }
   if (!isMissingColumnError(error, 'is_archived', 'products')) throw error;
@@ -387,13 +407,16 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     missingColumn: 'is_archived',
     fallbackMode: 'loadWithoutArchiveColumn',
   });
-  const { data: fallbackData, error: fallbackError } = await baseQuery();
+  const { data: fallbackData, error: fallbackError } = await scopedBaseQuery();
   if (fallbackError) throw fallbackError;
-  const mergedRows = mergeProductRows(
-    (fallbackData ?? []) as CachedProductRow[],
-    readCachedProducts(businessId),
-    false,
-  );
+  let liveRows = (fallbackData ?? []) as CachedProductRow[];
+  if (liveRows.length === 0 && businessId) {
+    const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
+    if (!visibleError) {
+      liveRows = (visibleRows ?? []) as CachedProductRow[];
+    }
+  }
+  const mergedRows = mergeProductRows(liveRows, readCachedProducts(businessId), false);
   if (mergedRows.length > 0 && businessId) writeCachedProducts(businessId, mergedRows);
   return mergedRows.length > 0 ? mergedRows : getCachedRowsFallback();
 }
