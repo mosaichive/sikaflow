@@ -162,8 +162,16 @@ function isMissingColumnError(error: unknown, columnName?: string, tableName?: s
 
   const mentionsTable =
     !targetTable
+    || message.includes(targetTable)
+    || message.includes(`public.${targetTable}`)
+    || (targetColumn ? message.includes(`${targetTable}.${targetColumn}`) : false)
+    || (targetColumn ? message.includes(`public.${targetTable}.${targetColumn}`) : false)
     || message.includes(`'${targetTable}'`)
     || message.includes(`relation "${targetTable}"`)
+    || details.includes(targetTable)
+    || details.includes(`public.${targetTable}`)
+    || (targetColumn ? details.includes(`${targetTable}.${targetColumn}`) : false)
+    || (targetColumn ? details.includes(`public.${targetTable}.${targetColumn}`) : false)
     || details.includes(`'${targetTable}'`)
     || details.includes(`relation "${targetTable}"`);
 
@@ -400,7 +408,15 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
 
     return getCachedRowsFallback();
   }
-  if (!isMissingColumnError(error, 'is_archived', 'products')) throw error;
+  if (!isMissingColumnError(error, 'is_archived', 'products')) {
+    logSupabaseError('workspace.loadProductsCompat', error, {
+      table: 'products',
+      fallbackMode: 'loadFromCacheAfterReadFailure',
+      businessId,
+      showArchived,
+    });
+    return getCachedRowsFallback();
+  }
 
   logSupabaseError('workspace.loadProductsCompat', error, {
     table: 'products',
@@ -408,7 +424,15 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     fallbackMode: 'loadWithoutArchiveColumn',
   });
   const { data: fallbackData, error: fallbackError } = await scopedBaseQuery();
-  if (fallbackError) throw fallbackError;
+  if (fallbackError) {
+    logSupabaseError('workspace.loadProductsCompat.fallback', fallbackError, {
+      table: 'products',
+      fallbackMode: 'loadFromCacheAfterFallbackFailure',
+      businessId,
+      showArchived,
+    });
+    return getCachedRowsFallback();
+  }
   let liveRows = (fallbackData ?? []) as CachedProductRow[];
   if (liveRows.length === 0 && businessId) {
     const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
