@@ -19,6 +19,7 @@ import {
   getErrorMessage,
   insertStockMovementCompat,
   logSupabaseError,
+  rememberCachedProduct,
   updateBusinessWorkspaceRecord,
   updateProfileRecord,
 } from '@/lib/workspace';
@@ -240,12 +241,13 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
           const costPrice = Number(row.costPrice);
           const sellingPrice = Number(row.sellingPrice);
           const lowStockThreshold = Number(row.lowStockThreshold || 0);
+          const sku = generateSetupSku(row.name);
 
           const createdProduct = await createProductRecord({
               business_id: businessId,
               user_id: user.id,
               name: row.name.trim(),
-              sku: generateSetupSku(row.name),
+              sku,
               category: row.category.trim(),
               cost_price: costPrice,
               selling_price: sellingPrice,
@@ -254,6 +256,19 @@ export function FirstTimeSetupDialog({ open, onOpenChange, onCompleted }: FirstT
               low_stock_threshold: lowStockThreshold,
               is_archived: false,
             });
+
+          rememberCachedProduct(businessId, {
+            id: createdProduct.id,
+            name: row.name.trim(),
+            category: row.category.trim(),
+            sku,
+            cost_price: costPrice,
+            selling_price: sellingPrice,
+            quantity,
+            reorder_level: lowStockThreshold,
+            low_stock_threshold: lowStockThreshold,
+            is_archived: false,
+          });
 
           if (row.imageFile) {
             try {

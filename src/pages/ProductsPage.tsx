@@ -21,6 +21,8 @@ import {
   insertStockMovementCompat,
   loadProductsCompat,
   logSupabaseError,
+  rememberCachedProduct,
+  removeCachedProduct,
   updateProductRecord,
 } from '@/lib/workspace';
 
@@ -70,9 +72,9 @@ export default function ProductsPage() {
   const canManage = isAdmin || isManager;
 
   const load = useCallback(async () => {
-    const data = await loadProductsCompat(showArchived);
+    const data = await loadProductsCompat(showArchived, businessId);
     setRows(data as ProductRow[]);
-  }, [showArchived]);
+  }, [businessId, showArchived]);
 
   useEffect(() => {
     void load();
@@ -199,6 +201,11 @@ export default function ProductsPage() {
               : row,
           ),
         );
+        rememberCachedProduct(activeBusinessId, {
+          id: editing.id,
+          ...payload,
+          image_url: nextImageUrl,
+        });
         toast({ title: 'Product updated', description: imageWarning || undefined });
       } else {
         const created = await createProductRecord(payload);
@@ -266,6 +273,11 @@ export default function ProductsPage() {
           const withoutDuplicate = current.filter((row) => row.id !== nextRow.id);
           return [nextRow, ...withoutDuplicate].sort((left, right) => left.name.localeCompare(right.name));
         });
+        rememberCachedProduct(activeBusinessId, {
+          id: created.id,
+          ...payload,
+          image_url: nextImageUrl,
+        });
         toast({
           title: 'Product added',
           description: imageWarning || (quantity > 0 ? 'Opening stock was recorded too.' : 'Add stock later from Inventory.'),
@@ -299,6 +311,12 @@ export default function ProductsPage() {
       toast({ title: 'Could not update product', description: error.message, variant: 'destructive' });
       return;
     }
+    if (businessId) {
+      rememberCachedProduct(businessId, {
+        ...row,
+        is_archived: !row.is_archived,
+      });
+    }
     toast({ title: row.is_archived ? 'Product restored' : 'Product archived' });
     void load();
   };
@@ -308,6 +326,9 @@ export default function ProductsPage() {
     if (error) {
       toast({ title: 'Could not delete product', description: error.message, variant: 'destructive' });
       return;
+    }
+    if (businessId) {
+      removeCachedProduct(businessId, id);
     }
     toast({ title: 'Product deleted' });
     void load();

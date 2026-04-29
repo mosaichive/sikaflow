@@ -243,6 +243,7 @@ export default function Dashboard() {
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth();
   const { business } = useBusiness();
+  const businessId = business?.id ?? null;
   const { isAdmin, isManager, displayName, onboardingCompleted, user } = useAuth();
   const [data, setData] = useState<DashboardData>({
     sales: [],
@@ -271,7 +272,7 @@ export default function Dashboard() {
     const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes] = await Promise.all([
       supabase.from('sales').select('*').order('sale_date', { ascending: false }),
       supabase.from('sale_items').select('*'),
-      loadProductsCompat(false),
+      loadProductsCompat(false, businessId),
       supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
       supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
       supabase.from('savings').select('amount,savings_date'),
@@ -288,7 +289,7 @@ export default function Dashboard() {
       investments: (investmentsRes.data || []) as InvestmentRow[],
     });
     setLoading(false);
-  }, []);
+  }, [businessId]);
 
   useEffect(() => {
     void fetchDashboard();

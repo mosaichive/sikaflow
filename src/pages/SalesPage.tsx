@@ -100,7 +100,7 @@ export default function SalesPage() {
   }, [historyDateFrom, historyDateTo]);
 
   const fetchAllProducts = async () => {
-    const data = await loadProductsCompat(false);
+    const data = await loadProductsCompat(false, businessId);
     setAllProducts(data || []);
     setProducts((data || []).filter((p: any) => p.quantity > 0));
   };

@@ -20,6 +20,57 @@ type EnsureWorkspaceInput = {
   allowCreate?: boolean;
 };
 
+type CachedProductRow = {
+  id: string;
+  name: string;
+  sku?: string;
+  category?: string;
+  quantity?: number;
+  cost_price?: number | string;
+  selling_price?: number | string;
+  reorder_level?: number | null;
+  low_stock_threshold?: number | null;
+  image_url?: string | null;
+  is_archived?: boolean | null;
+};
+
+function getProductCacheKey(businessId: string) {
+  return `sikaflow_products_${businessId}`;
+}
+
+function readCachedProducts(businessId?: string | null): CachedProductRow[] {
+  if (!businessId || typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(getProductCacheKey(businessId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as CachedProductRow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedProducts(businessId: string, rows: CachedProductRow[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(getProductCacheKey(businessId), JSON.stringify(rows));
+  } catch {
+    // Ignore storage write errors. Cache is only a UX fallback.
+  }
+}
+
+export function rememberCachedProduct(businessId: string, row: CachedProductRow) {
+  const existing = readCachedProducts(businessId).filter((item) => item.id !== row.id);
+  existing.push(row);
+  existing.sort((left, right) => (left.name || '').localeCompare(right.name || ''));
+  writeCachedProducts(businessId, existing);
+}
+
+export function removeCachedProduct(businessId: string, productId: string) {
+  const nextRows = readCachedProducts(businessId).filter((item) => item.id !== productId);
+  writeCachedProducts(businessId, nextRows);
+}
+
 async function ensureBusinessRoleMembership({
   businessId,
   userId,
@@ -259,23 +310,35 @@ export async function updateProductRecord(
   });
 }
 
-export async function loadProductsCompat(showArchived: boolean) {
+export async function loadProductsCompat(showArchived: boolean, businessId?: string | null) {
   const baseQuery = () => supabase.from('products').select('*').order('name');
+  const filterCachedRows = (rows: CachedProductRow[]) =>
+    showArchived ? rows : rows.filter((row) => row.is_archived !== true);
+  const getCachedRowsFallback = () => filterCachedRows(readCachedProducts(businessId));
 
   if (showArchived) {
     const { data, error } = await baseQuery();
     if (error) throw error;
+    if (businessId && data) writeCachedProducts(businessId, data as CachedProductRow[]);
     return data ?? [];
   }
 
   const { data, error } = await baseQuery().eq('is_archived', false);
   if (!error) {
     const rows = (data ?? []) as Array<{ is_archived?: boolean | null }>;
-    if (rows.length > 0) return rows;
+    if (rows.length > 0) {
+      if (businessId) writeCachedProducts(businessId, rows as CachedProductRow[]);
+      return rows;
+    }
 
     const { data: fallbackData, error: fallbackError } = await baseQuery();
     if (fallbackError) throw fallbackError;
-    return ((fallbackData ?? []) as Array<{ is_archived?: boolean | null }>).filter((row) => row.is_archived !== true);
+    const filteredRows = ((fallbackData ?? []) as Array<{ is_archived?: boolean | null }>).filter((row) => row.is_archived !== true);
+    if (filteredRows.length > 0) {
+      if (businessId) writeCachedProducts(businessId, filteredRows as CachedProductRow[]);
+      return filteredRows;
+    }
+    return getCachedRowsFallback();
   }
   if (!isMissingColumnError(error, 'is_archived', 'products')) throw error;
 
@@ -286,7 +349,9 @@ export async function loadProductsCompat(showArchived: boolean) {
   });
   const { data: fallbackData, error: fallbackError } = await baseQuery();
   if (fallbackError) throw fallbackError;
-  return fallbackData ?? [];
+  const rows = (fallbackData ?? []) as CachedProductRow[];
+  if (rows.length > 0 && businessId) writeCachedProducts(businessId, rows);
+  return rows.length > 0 ? rows : getCachedRowsFallback();
 }
 
 export async function loadStockMovementsCompat(limit = 100) {

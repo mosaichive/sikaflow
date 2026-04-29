@@ -69,7 +69,7 @@ export default function InventoryPage() {
 
   const load = useCallback(async () => {
     const [productsRes, movementsRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.allSettled([
-      loadProductsCompat(false),
+      loadProductsCompat(false, businessId),
       loadStockMovementsCompat(100),
       supabase.from('sales').select('total,amount_paid,payment_status,status'),
       supabase.from('expenses').select('amount'),
@@ -107,7 +107,7 @@ export default function InventoryPage() {
     if (otherIncomeRes.status === 'rejected') logSupabaseError('inventory.load.otherIncome', otherIncomeRes.reason);
 
     setAvailableMoney(money.availableBusinessMoney);
-  }, []);
+  }, [businessId]);
 
   useEffect(() => {
     void load();
