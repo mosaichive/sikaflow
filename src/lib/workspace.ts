@@ -44,8 +44,10 @@ function isMissingColumnError(error: unknown, columnName?: string, tableName?: s
 
   const mentionsColumn =
     !targetColumn
+    || message.includes(targetColumn)
     || message.includes(`'${targetColumn}'`)
     || message.includes(`column "${targetColumn}"`)
+    || details.includes(targetColumn)
     || details.includes(`'${targetColumn}'`)
     || details.includes(`column "${targetColumn}"`);
 
@@ -79,9 +81,11 @@ function isMissingTableError(error: unknown, tableName?: string) {
 
   const mentionsTable =
     !targetTable
+    || message.includes(targetTable)
     || message.includes(`'${targetTable}'`)
     || message.includes(`relation "${targetTable}"`)
     || message.includes(`table ${targetTable}`)
+    || details.includes(targetTable)
     || details.includes(`'${targetTable}'`)
     || details.includes(`relation "${targetTable}"`)
     || details.includes(`table ${targetTable}`);
