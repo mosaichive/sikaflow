@@ -60,6 +60,7 @@ export default function InventoryPage() {
     movement_date: new Date().toISOString().slice(0, 10),
     quantity: '1',
     unit_cost: '0',
+    selling_price: '0',
     payment_method: PAYMENT_METHODS[0].value,
     description: '',
     record_restocks_expense: false,
@@ -138,6 +139,25 @@ export default function InventoryPage() {
     () => Math.max(0, Number(form.quantity || 0)) * Math.max(0, Number(form.unit_cost || 0)),
     [form.quantity, form.unit_cost],
   );
+  const restockStockValueCost = useMemo(
+    () => Math.max(0, Number(form.quantity || 0)) * Math.max(0, Number(form.unit_cost || 0)),
+    [form.quantity, form.unit_cost],
+  );
+
+  useEffect(() => {
+    if (!selectedProduct) return;
+    setForm((current) => ({
+      ...current,
+      unit_cost:
+        current.product_id === selectedProduct.id && current.unit_cost !== '0'
+          ? current.unit_cost
+          : String(Number(selectedProduct.cost_price || 0)),
+      selling_price:
+        current.product_id === selectedProduct.id && current.selling_price !== '0'
+          ? current.selling_price
+          : String(Number(selectedProduct.selling_price || 0)),
+    }));
+  }, [selectedProduct?.id]);
 
   const saveMovement = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -145,6 +165,7 @@ export default function InventoryPage() {
 
     const quantity = Math.max(0, Number(form.quantity || 0));
     const unitCost = Number(form.unit_cost || 0);
+    const sellingPrice = Number(form.selling_price || selectedProduct?.selling_price || 0);
     if (quantity <= 0) {
       toast({ title: 'Quantity must be at least 1', variant: 'destructive' });
       return;
@@ -166,7 +187,12 @@ export default function InventoryPage() {
 
     setSaving(true);
     try {
-      const { error: productError } = await supabase.from('products').update({ quantity: nextQuantity } as never).eq('id', selectedProduct.id);
+      const nextProductPatch: Record<string, unknown> = { quantity: nextQuantity };
+      if (form.movement_type === 'restock') {
+        nextProductPatch.cost_price = unitCost;
+        nextProductPatch.selling_price = sellingPrice;
+      }
+      const { error: productError } = await supabase.from('products').update(nextProductPatch as never).eq('id', selectedProduct.id);
       if (productError) throw productError;
 
       const movementResult = await insertStockMovementCompat({
@@ -176,7 +202,7 @@ export default function InventoryPage() {
         quantity_change: quantityChange,
         quantity_after: nextQuantity,
         unit_cost: unitCost,
-        unit_price: selectedProduct.selling_price,
+        unit_price: form.movement_type === 'restock' ? sellingPrice : selectedProduct.selling_price,
         note: form.description,
         created_by: user.id,
         created_by_name: displayName || user.email || '',
@@ -243,6 +269,7 @@ export default function InventoryPage() {
         movement_date: new Date().toISOString().slice(0, 10),
         quantity: '1',
         unit_cost: '0',
+        selling_price: '0',
         payment_method: PAYMENT_METHODS[0].value,
         description: '',
         record_restocks_expense: false,
@@ -316,7 +343,18 @@ export default function InventoryPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Product</Label>
-                  <Select value={form.product_id} onValueChange={(value) => setForm((current) => ({ ...current, product_id: value }))}>
+                  <Select
+                    value={form.product_id}
+                    onValueChange={(value) => {
+                      const product = products.find((item) => item.id === value);
+                      setForm((current) => ({
+                        ...current,
+                        product_id: value,
+                        unit_cost: String(Number(product?.cost_price || 0)),
+                        selling_price: String(Number(product?.selling_price || 0)),
+                      }));
+                    }}
+                  >
                     <SelectTrigger><SelectValue placeholder="Choose product" /></SelectTrigger>
                     <SelectContent>
                       {products.map((product) => (
@@ -361,12 +399,20 @@ export default function InventoryPage() {
                 {form.movement_type === 'restock' ? (
                   <>
                     <div className="space-y-2">
-                      <Label>Cost Per Unit</Label>
+                      <Label>Cost Per Unit (Buying Price)</Label>
                       <Input type="number" min="0" step="0.01" value={form.unit_cost} onChange={(event) => setForm((current) => ({ ...current, unit_cost: event.target.value }))} />
                     </div>
                     <div className="space-y-2">
-                      <Label>Total Cost</Label>
+                      <Label>Selling Price (Customer Price)</Label>
+                      <Input type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm((current) => ({ ...current, selling_price: event.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Total Cost (Buying Cost)</Label>
                       <Input value={formatCurrency(totalRestockCost)} readOnly />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Stock Value (Cost)</Label>
+                      <Input value={formatCurrency(restockStockValueCost)} readOnly />
                     </div>
                     <div className="space-y-2">
                       <Label>Payment Method</Label>
@@ -424,7 +470,7 @@ export default function InventoryPage() {
                         <TableHead>Category</TableHead>
                         <TableHead>Quantity</TableHead>
                         <TableHead>Low Stock</TableHead>
-                        <TableHead>Value</TableHead>
+                        <TableHead>Stock Value (Cost)</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>

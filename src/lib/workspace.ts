@@ -65,6 +65,28 @@ function readCachedProducts(businessId?: string | null): CachedProductRow[] {
   }
 }
 
+function readAllCachedProducts(): CachedProductRow[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const rowsById = new Map<string, CachedProductRow>();
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key || !key.startsWith('sikaflow_products_')) continue;
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) continue;
+      for (const row of parsed as CachedProductRow[]) {
+        if (!row?.id) continue;
+        rowsById.set(row.id, row);
+      }
+    }
+    return Array.from(rowsById.values());
+  } catch {
+    return [];
+  }
+}
+
 function writeCachedProducts(businessId: string, rows: CachedProductRow[]) {
   if (typeof window === 'undefined') return;
   try {
@@ -361,6 +383,7 @@ export async function updateProductRecord(
 
 export async function loadProductsCompat(showArchived: boolean, businessId?: string | null) {
   const effectiveBusinessId = businessId ?? await resolveActiveBusinessIdFromSession();
+  const allCachedRows = readAllCachedProducts();
   const scopedBaseQuery = () => {
     let query = supabase.from('products').select('*').order('name');
     if (effectiveBusinessId) {
@@ -375,7 +398,11 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
       : rows;
   const filterCachedRows = (rows: CachedProductRow[]) =>
     showArchived ? rows : rows.filter((row) => row.is_archived !== true);
-  const getCachedRowsFallback = () => filterCachedRows(readCachedProducts(effectiveBusinessId));
+  const getCachedRowsFallback = () => {
+    const businessScopedRows = filterCachedRows(readCachedProducts(effectiveBusinessId));
+    if (businessScopedRows.length > 0) return businessScopedRows;
+    return filterCachedRows(filterVisibleRows(allCachedRows));
+  };
 
   if (showArchived) {
     const { data, error } = await scopedBaseQuery();
@@ -387,7 +414,7 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
         liveRows = filterVisibleRows((visibleRows ?? []) as CachedProductRow[]);
       }
     }
-    const mergedRows = mergeProductRows(liveRows, readCachedProducts(effectiveBusinessId), true);
+    const mergedRows = mergeProductRows(liveRows, filterVisibleRows(allCachedRows), true);
     if (effectiveBusinessId && mergedRows.length > 0) writeCachedProducts(effectiveBusinessId, mergedRows);
     return mergedRows;
   }
@@ -398,7 +425,7 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     if (rows.length > 0) {
       const mergedRows = mergeProductRows(
         rows as CachedProductRow[],
-        readCachedProducts(effectiveBusinessId),
+        filterVisibleRows(allCachedRows),
         false,
       );
       if (effectiveBusinessId && mergedRows.length > 0) writeCachedProducts(effectiveBusinessId, mergedRows);
@@ -408,7 +435,7 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     const { data: fallbackData, error: fallbackError } = await scopedBaseQuery();
     if (fallbackError) throw fallbackError;
     const filteredRows = ((fallbackData ?? []) as Array<{ is_archived?: boolean | null }>).filter((row) => row.is_archived !== true) as CachedProductRow[];
-    const mergedRows = mergeProductRows(filteredRows, readCachedProducts(businessId), false);
+    const mergedRows = mergeProductRows(filteredRows, filterVisibleRows(allCachedRows), false);
     if (mergedRows.length > 0) {
       if (businessId) writeCachedProducts(businessId, mergedRows);
       return mergedRows;
@@ -419,7 +446,7 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
       if (!visibleError) {
         const mergedVisibleRows = mergeProductRows(
           filterVisibleRows((visibleRows ?? []) as CachedProductRow[]).filter((row) => row.is_archived !== true),
-          readCachedProducts(effectiveBusinessId),
+          filterVisibleRows(allCachedRows),
           false,
         );
         if (mergedVisibleRows.length > 0) {
@@ -463,7 +490,7 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
       liveRows = filterVisibleRows((visibleRows ?? []) as CachedProductRow[]);
     }
   }
-  const mergedRows = mergeProductRows(liveRows, readCachedProducts(effectiveBusinessId), false);
+  const mergedRows = mergeProductRows(liveRows, filterVisibleRows(allCachedRows), false);
   if (mergedRows.length > 0 && effectiveBusinessId) writeCachedProducts(effectiveBusinessId, mergedRows);
   return mergedRows.length > 0 ? mergedRows : getCachedRowsFallback();
 }
