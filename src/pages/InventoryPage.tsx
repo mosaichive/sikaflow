@@ -57,6 +57,7 @@ export default function InventoryPage() {
   const [form, setForm] = useState({
     product_id: '',
     movement_type: 'restock',
+    movement_date: new Date().toISOString().slice(0, 10),
     quantity: '1',
     unit_cost: '0',
     payment_method: PAYMENT_METHODS[0].value,
@@ -70,7 +71,7 @@ export default function InventoryPage() {
   const load = useCallback(async () => {
     const [productsRes, movementsRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.allSettled([
       loadProductsCompat(false, businessId),
-      loadStockMovementsCompat(100),
+      loadStockMovementsCompat(100, businessId),
       supabase.from('sales').select('total,amount_paid,payment_status,status'),
       supabase.from('expenses').select('amount'),
       supabase.from('savings').select('amount'),
@@ -125,9 +126,17 @@ export default function InventoryPage() {
 
   const selectedProduct = products.find((product) => product.id === form.product_id) || null;
   const stockValue = useMemo(() => calculateStockValue(products, 'cost'), [products]);
-  const lowStockProducts = useMemo(
-    () => products.filter((product) => product.quantity <= toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0)),
+  const stockProducts = useMemo(
+    () => products.filter((product) => Math.max(0, toNumber(product.quantity)) > 0),
     [products],
+  );
+  const lowStockProducts = useMemo(
+    () => stockProducts.filter((product) => product.quantity <= toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0)),
+    [stockProducts],
+  );
+  const totalRestockCost = useMemo(
+    () => Math.max(0, Number(form.quantity || 0)) * Math.max(0, Number(form.unit_cost || 0)),
+    [form.quantity, form.unit_cost],
   );
 
   const saveMovement = async (event: React.FormEvent) => {
@@ -171,7 +180,7 @@ export default function InventoryPage() {
         note: form.description,
         created_by: user.id,
         created_by_name: displayName || user.email || '',
-        movement_date: new Date().toISOString(),
+        movement_date: new Date(`${form.movement_date}T00:00:00`).toISOString(),
       });
       if (movementResult.skipped) {
         logSupabaseError('inventory.saveMovementSkipped', new Error('stock_movements table unavailable'), {
@@ -192,7 +201,7 @@ export default function InventoryPage() {
           quantity_added: quantity,
           cost_price_per_unit: unitCost,
           total_cost: totalCost,
-          restock_date: new Date().toISOString(),
+          restock_date: new Date(`${form.movement_date}T00:00:00`).toISOString(),
           recorded_by: user.id,
           recorded_by_name: displayName || user.email || '',
           payment_method: form.payment_method,
@@ -208,7 +217,7 @@ export default function InventoryPage() {
             description: `Restock for ${selectedProduct.name}${form.description ? ` - ${form.description}` : ''}`,
             amount: totalCost,
             payment_method: form.payment_method,
-            expense_date: new Date().toISOString(),
+            expense_date: new Date(`${form.movement_date}T00:00:00`).toISOString(),
             recorded_by: user.id,
             recorded_by_name: displayName || user.email || '',
           });
@@ -231,6 +240,7 @@ export default function InventoryPage() {
       setForm({
         product_id: '',
         movement_type: 'restock',
+        movement_date: new Date().toISOString().slice(0, 10),
         quantity: '1',
         unit_cost: '0',
         payment_method: PAYMENT_METHODS[0].value,
@@ -269,7 +279,7 @@ export default function InventoryPage() {
               </Tooltip>
             </div>
             <p className="text-sm text-muted-foreground">
-              Track opening stock, restocks, returns, damaged stock, and manual adjustments. Restocking is never blocked by available money.
+              Track opening stock, restocks, returns, damaged stock, and manual adjustments. Products appear in stock only after you add inventory here.
             </p>
           </div>
 
@@ -318,6 +328,10 @@ export default function InventoryPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
+                  <Label>Date</Label>
+                  <Input type="date" value={form.movement_date} onChange={(event) => setForm((current) => ({ ...current, movement_date: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
                   <Label>Movement Type</Label>
                   <Select value={form.movement_type} onValueChange={(value) => setForm((current) => ({ ...current, movement_type: value }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
@@ -329,7 +343,7 @@ export default function InventoryPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Quantity</Label>
+                  <Label>{form.movement_type === 'restock' ? 'Quantity Added' : 'Quantity'}</Label>
                   <Input type="number" min="1" step="1" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} />
                 </div>
                 {form.movement_type === 'manual_adjustment' ? (
@@ -351,6 +365,10 @@ export default function InventoryPage() {
                       <Input type="number" min="0" step="0.01" value={form.unit_cost} onChange={(event) => setForm((current) => ({ ...current, unit_cost: event.target.value }))} />
                     </div>
                     <div className="space-y-2">
+                      <Label>Total Cost</Label>
+                      <Input value={formatCurrency(totalRestockCost)} readOnly />
+                    </div>
+                    <div className="space-y-2">
                       <Label>Payment Method</Label>
                       <Select value={form.payment_method} onValueChange={(value) => setForm((current) => ({ ...current, payment_method: value }))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -364,7 +382,7 @@ export default function InventoryPage() {
                   </>
                 ) : null}
                 <div className="space-y-2 md:col-span-2">
-                  <Label>Description / Note</Label>
+                  <Label>Note / Reference (optional)</Label>
                   <Textarea rows={3} value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} />
                 </div>
               </div>
@@ -397,7 +415,7 @@ export default function InventoryPage() {
               <CardTitle>Current Stock</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              {products.length > 0 ? (
+              {stockProducts.length > 0 ? (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -410,7 +428,7 @@ export default function InventoryPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {products.map((product) => (
+                      {stockProducts.map((product) => (
                         <TableRow key={product.id}>
                           <TableCell className="font-medium">{product.name}</TableCell>
                           <TableCell>{product.category || '—'}</TableCell>
@@ -426,7 +444,7 @@ export default function InventoryPage() {
                 <EmptyState
                   icon={<Boxes className="h-7 w-7 text-muted-foreground" />}
                   title="No products in inventory yet"
-                  description="Add products first, then record opening stock, restocks, returns, or adjustments here."
+                  description="Add products first, then use Record Inventory Change to restock and make them appear in stock."
                 />
               )}
             </CardContent>

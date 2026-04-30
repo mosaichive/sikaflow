@@ -3,7 +3,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { useBusiness } from '@/context/BusinessContext';
 import { useAuth } from '@/context/AuthContext';
@@ -21,8 +20,8 @@ interface AddProductDialogProps {
 }
 
 const empty = {
-  name: '', category: '', sku: '', selling_price: 0, cost_price: 0,
-  reorder_level: 5, sizes: '', colors: '', description: '',
+  name: '', category: '', selling_price: 0, cost_price: 0,
+  reorder_level: 5,
 };
 
 function autoSku(name: string) {
@@ -57,7 +56,6 @@ export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNe
       return;
     }
     setLoading(true);
-    const sku = form.sku.trim() || autoSku(form.name);
     const activeBusinessId = await ensureUserBusinessWorkspace({
       existingBusinessId: businessId,
       user,
@@ -73,10 +71,8 @@ export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNe
       business_id: activeBusinessId,
       user_id: user.id,
       name: form.name.trim(),
-      sku,
+      sku: autoSku(form.name),
       category: form.category.trim(),
-      sizes: form.sizes.split(',').map(s => s.trim()).filter(Boolean),
-      colors: form.colors.split(',').map(s => s.trim()).filter(Boolean),
       cost_price: Number(form.cost_price) || 0,
       selling_price: Number(form.selling_price) || 0,
       reorder_level: Number(form.reorder_level) || 0,
@@ -118,17 +114,11 @@ export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNe
                 <Label>Product Name *</Label>
                 <Input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Category</Label>
                   <Input value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} />
                 </div>
-                <div>
-                  <Label>SKU <span className="text-muted-foreground text-xs">(auto if empty)</span></Label>
-                  <Input value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} placeholder="Auto-generated" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Selling Price (GH₵) *</Label>
                   <Input required type="number" min={0} step="0.01" value={form.selling_price}
@@ -141,23 +131,9 @@ export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNe
                 </div>
               </div>
               <div>
-                <Label>Reorder Level</Label>
+                <Label>Low Stock Threshold</Label>
                 <Input type="number" min={0} value={form.reorder_level}
                   onChange={e => setForm({ ...form, reorder_level: Number(e.target.value) })} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Sizes <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                  <Input value={form.sizes} onChange={e => setForm({ ...form, sizes: e.target.value })} placeholder="S, M, L" />
-                </div>
-                <div>
-                  <Label>Colors <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                  <Input value={form.colors} onChange={e => setForm({ ...form, colors: e.target.value })} placeholder="Black, White" />
-                </div>
-              </div>
-              <div>
-                <Label>Description <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                <Textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={2} />
               </div>
               <DialogFooter className="flex-col sm:flex-row gap-2">
                 <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="w-full sm:w-auto">
@@ -176,7 +152,7 @@ export function AddProductDialog({ open, onOpenChange, onCreated, offerRestockNe
             </div>
             <div>
               <h3 className="text-lg font-semibold">Product added successfully</h3>
-              <p className="text-sm text-muted-foreground mt-1">{createdProduct.name} is now in your inventory.</p>
+              <p className="text-sm text-muted-foreground mt-1">{createdProduct.name} is ready. Add stock next from Inventory.</p>
             </div>
             <div className="grid grid-cols-2 gap-2 pt-2">
               <Button variant="outline" onClick={() => onOpenChange(false)}>

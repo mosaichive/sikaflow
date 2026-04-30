@@ -22,6 +22,7 @@ type EnsureWorkspaceInput = {
 
 type CachedProductRow = {
   id: string;
+  business_id?: string;
   name: string;
   sku?: string;
   category?: string;
@@ -36,6 +37,20 @@ type CachedProductRow = {
 
 function getProductCacheKey(businessId: string) {
   return `sikaflow_products_${businessId}`;
+}
+
+async function resolveActiveBusinessIdFromSession() {
+  const { data } = await supabase.auth.getUser();
+  const userId = data.user?.id;
+  if (!userId) return null;
+  try {
+    return await resolveCurrentBusinessId(userId);
+  } catch (error) {
+    logSupabaseError('workspace.resolveActiveBusinessIdFromSession', error, {
+      userId,
+    });
+    return null;
+  }
 }
 
 function readCachedProducts(businessId?: string | null): CachedProductRow[] {
@@ -61,7 +76,10 @@ function writeCachedProducts(businessId: string, rows: CachedProductRow[]) {
 
 export function rememberCachedProduct(businessId: string, row: CachedProductRow) {
   const existing = readCachedProducts(businessId).filter((item) => item.id !== row.id);
-  existing.push(row);
+  existing.push({
+    ...row,
+    business_id: row.business_id ?? businessId,
+  });
   existing.sort((left, right) => (left.name || '').localeCompare(right.name || ''));
   writeCachedProducts(businessId, existing);
 }
@@ -342,30 +360,35 @@ export async function updateProductRecord(
 }
 
 export async function loadProductsCompat(showArchived: boolean, businessId?: string | null) {
+  const effectiveBusinessId = businessId ?? await resolveActiveBusinessIdFromSession();
   const scopedBaseQuery = () => {
     let query = supabase.from('products').select('*').order('name');
-    if (businessId) {
-      query = query.eq('business_id', businessId);
+    if (effectiveBusinessId) {
+      query = query.eq('business_id', effectiveBusinessId);
     }
     return query;
   };
   const visibleBaseQuery = () => supabase.from('products').select('*').order('name');
+  const filterVisibleRows = (rows: CachedProductRow[]) =>
+    effectiveBusinessId
+      ? rows.filter((row) => row.business_id === effectiveBusinessId)
+      : rows;
   const filterCachedRows = (rows: CachedProductRow[]) =>
     showArchived ? rows : rows.filter((row) => row.is_archived !== true);
-  const getCachedRowsFallback = () => filterCachedRows(readCachedProducts(businessId));
+  const getCachedRowsFallback = () => filterCachedRows(readCachedProducts(effectiveBusinessId));
 
   if (showArchived) {
     const { data, error } = await scopedBaseQuery();
     if (error) throw error;
     let liveRows = (data ?? []) as CachedProductRow[];
-    if (liveRows.length === 0 && businessId) {
+    if (liveRows.length === 0 && effectiveBusinessId) {
       const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
       if (!visibleError) {
-        liveRows = (visibleRows ?? []) as CachedProductRow[];
+        liveRows = filterVisibleRows((visibleRows ?? []) as CachedProductRow[]);
       }
     }
-    const mergedRows = mergeProductRows(liveRows, readCachedProducts(businessId), true);
-    if (businessId && mergedRows.length > 0) writeCachedProducts(businessId, mergedRows);
+    const mergedRows = mergeProductRows(liveRows, readCachedProducts(effectiveBusinessId), true);
+    if (effectiveBusinessId && mergedRows.length > 0) writeCachedProducts(effectiveBusinessId, mergedRows);
     return mergedRows;
   }
 
@@ -375,10 +398,10 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     if (rows.length > 0) {
       const mergedRows = mergeProductRows(
         rows as CachedProductRow[],
-        readCachedProducts(businessId),
+        readCachedProducts(effectiveBusinessId),
         false,
       );
-      if (businessId && mergedRows.length > 0) writeCachedProducts(businessId, mergedRows);
+      if (effectiveBusinessId && mergedRows.length > 0) writeCachedProducts(effectiveBusinessId, mergedRows);
       return mergedRows;
     }
 
@@ -391,16 +414,16 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
       return mergedRows;
     }
 
-    if (businessId) {
+    if (effectiveBusinessId) {
       const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
       if (!visibleError) {
         const mergedVisibleRows = mergeProductRows(
-          ((visibleRows ?? []) as CachedProductRow[]).filter((row) => row.is_archived !== true),
-          readCachedProducts(businessId),
+          filterVisibleRows((visibleRows ?? []) as CachedProductRow[]).filter((row) => row.is_archived !== true),
+          readCachedProducts(effectiveBusinessId),
           false,
         );
         if (mergedVisibleRows.length > 0) {
-          writeCachedProducts(businessId, mergedVisibleRows);
+          writeCachedProducts(effectiveBusinessId, mergedVisibleRows);
           return mergedVisibleRows;
         }
       }
@@ -412,7 +435,7 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     logSupabaseError('workspace.loadProductsCompat', error, {
       table: 'products',
       fallbackMode: 'loadFromCacheAfterReadFailure',
-      businessId,
+      businessId: effectiveBusinessId,
       showArchived,
     });
     return getCachedRowsFallback();
@@ -428,29 +451,36 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     logSupabaseError('workspace.loadProductsCompat.fallback', fallbackError, {
       table: 'products',
       fallbackMode: 'loadFromCacheAfterFallbackFailure',
-      businessId,
+      businessId: effectiveBusinessId,
       showArchived,
     });
     return getCachedRowsFallback();
   }
   let liveRows = (fallbackData ?? []) as CachedProductRow[];
-  if (liveRows.length === 0 && businessId) {
+  if (liveRows.length === 0 && effectiveBusinessId) {
     const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
     if (!visibleError) {
-      liveRows = (visibleRows ?? []) as CachedProductRow[];
+      liveRows = filterVisibleRows((visibleRows ?? []) as CachedProductRow[]);
     }
   }
-  const mergedRows = mergeProductRows(liveRows, readCachedProducts(businessId), false);
-  if (mergedRows.length > 0 && businessId) writeCachedProducts(businessId, mergedRows);
+  const mergedRows = mergeProductRows(liveRows, readCachedProducts(effectiveBusinessId), false);
+  if (mergedRows.length > 0 && effectiveBusinessId) writeCachedProducts(effectiveBusinessId, mergedRows);
   return mergedRows.length > 0 ? mergedRows : getCachedRowsFallback();
 }
 
-export async function loadStockMovementsCompat(limit = 100) {
-  const { data, error } = await supabase
+export async function loadStockMovementsCompat(limit = 100, businessId?: string | null) {
+  const effectiveBusinessId = businessId ?? await resolveActiveBusinessIdFromSession();
+  let query = supabase
     .from('stock_movements' as any)
     .select('*')
     .order('movement_date', { ascending: false })
     .limit(limit);
+
+  if (effectiveBusinessId) {
+    query = query.eq('business_id', effectiveBusinessId);
+  }
+
+  const { data, error } = await query;
 
   if (!error) return (data ?? []) as any[];
   if (!isMissingTableError(error, 'stock_movements')) throw error;

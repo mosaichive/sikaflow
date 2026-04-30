@@ -18,7 +18,6 @@ import {
   createProductRecord,
   ensureUserBusinessWorkspace,
   getErrorMessage,
-  insertStockMovementCompat,
   loadProductsCompat,
   logSupabaseError,
   rememberCachedProduct,
@@ -43,10 +42,8 @@ type ProductRow = {
 const emptyForm = {
   name: '',
   category: '',
-  sku: '',
   cost_price: '0',
   selling_price: '0',
-  quantity: '0',
   low_stock_threshold: '3',
 };
 
@@ -65,7 +62,6 @@ export default function ProductsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ProductRow | null>(null);
   const [saving, setSaving] = useState(false);
-  const [imageFile, setImageFile] = useState<File | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [form, setForm] = useState(emptyForm);
 
@@ -100,33 +96,20 @@ export default function ProductsPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setImageFile(null);
     setForm(emptyForm);
     setOpen(true);
   };
 
   const openEdit = (row: ProductRow) => {
     setEditing(row);
-    setImageFile(null);
     setForm({
       name: row.name,
       category: row.category || '',
-      sku: row.sku,
       cost_price: String(row.cost_price ?? 0),
       selling_price: String(row.selling_price ?? 0),
-      quantity: String(row.quantity ?? 0),
       low_stock_threshold: String(row.low_stock_threshold ?? row.reorder_level ?? 3),
     });
     setOpen(true);
-  };
-
-  const uploadProductImage = async (activeBusinessId: string, productId: string, file: File) => {
-    const ext = file.name.split('.').pop() || 'png';
-    const path = `${activeBusinessId}/${productId}-${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from('product-images').upload(path, file, { upsert: true });
-    if (error) throw error;
-    const { data } = supabase.storage.from('product-images').getPublicUrl(path);
-    return data.publicUrl;
   };
 
   const saveProduct = async (event: React.FormEvent) => {
@@ -151,44 +134,25 @@ export default function ProductsPage() {
         return;
       }
 
-      const quantity = Math.max(0, Number(form.quantity || 0));
       const lowStockThreshold = Math.max(0, Number(form.low_stock_threshold || 0));
-      let imageWarning = '';
-      const payload = {
+      const basePayload = {
         business_id: activeBusinessId,
         user_id: user.id,
         name: form.name.trim(),
         category: form.category.trim(),
-        sku: form.sku.trim() || generateSku(form.name),
         cost_price: Number(form.cost_price || 0),
         selling_price: Number(form.selling_price || 0),
-        quantity,
         reorder_level: lowStockThreshold,
         low_stock_threshold: lowStockThreshold,
         is_archived: false,
       };
 
       if (editing) {
+        const payload = {
+          ...basePayload,
+          sku: editing.sku,
+        };
         await updateProductRecord(editing.id, payload);
-        let nextImageUrl = editing.image_url ?? null;
-
-        if (imageFile) {
-          try {
-            const imageUrl = await uploadProductImage(activeBusinessId, editing.id, imageFile);
-            nextImageUrl = imageUrl;
-            const { error: imageUpdateError } = await supabase
-              .from('products')
-              .update({ image_url: imageUrl } as never)
-              .eq('id', editing.id);
-            if (imageUpdateError) throw imageUpdateError;
-          } catch (imageError) {
-            logSupabaseError('products.edit.imageUpload', imageError, {
-              productId: editing.id,
-              businessId: activeBusinessId,
-            });
-            imageWarning = 'The product saved, but the image could not be uploaded.';
-          }
-        }
 
         setRows((current) =>
           current.map((row) =>
@@ -196,7 +160,6 @@ export default function ProductsPage() {
               ? {
                   ...row,
                   ...payload,
-                  image_url: nextImageUrl,
                 }
               : row,
           ),
@@ -204,56 +167,15 @@ export default function ProductsPage() {
         rememberCachedProduct(activeBusinessId, {
           id: editing.id,
           ...payload,
-          image_url: nextImageUrl,
         });
-        toast({ title: 'Product updated', description: imageWarning || undefined });
+        toast({ title: 'Product updated' });
       } else {
+        const payload = {
+          ...basePayload,
+          sku: generateSku(form.name),
+          quantity: 0,
+        };
         const created = await createProductRecord(payload);
-        let nextImageUrl: string | null = null;
-
-        if (imageFile) {
-          try {
-            const imageUrl = await uploadProductImage(activeBusinessId, created.id, imageFile);
-            nextImageUrl = imageUrl;
-            const { error: imageUpdateError } = await supabase
-              .from('products')
-              .update({ image_url: imageUrl } as never)
-              .eq('id', created.id);
-            if (imageUpdateError) throw imageUpdateError;
-          } catch (imageError) {
-            logSupabaseError('products.create.imageUpload', imageError, {
-              productId: created.id,
-              businessId: activeBusinessId,
-            });
-            imageWarning = 'The product saved, but the image could not be uploaded.';
-          }
-        }
-
-        if (quantity > 0) {
-          try {
-            const movementResult = await insertStockMovementCompat({
-              business_id: activeBusinessId,
-              product_id: created.id,
-              movement_type: 'opening_stock',
-              quantity_change: quantity,
-              quantity_after: quantity,
-              unit_cost: Number(form.cost_price || 0),
-              unit_price: Number(form.selling_price || 0),
-              note: 'Opening Stock',
-              created_by: user.id,
-              created_by_name: displayName || user.email || '',
-            });
-            if (movementResult.skipped) {
-              imageWarning = imageWarning || 'The product saved, but inventory history will sync after database updates finish propagating.';
-            }
-          } catch (movementError) {
-            logSupabaseError('products.create.stockMovement', movementError, {
-              productId: created.id,
-              businessId: activeBusinessId,
-            });
-            imageWarning = imageWarning || 'The product saved, but opening stock history could not be recorded yet.';
-          }
-        }
 
         setRows((current) => {
           const nextRow: ProductRow = {
@@ -261,12 +183,12 @@ export default function ProductsPage() {
             name: payload.name,
             category: payload.category,
             sku: payload.sku,
-            quantity: Number(payload.quantity ?? 0),
+            quantity: 0,
             cost_price: Number(payload.cost_price ?? 0),
             selling_price: Number(payload.selling_price ?? 0),
             low_stock_threshold: Number(payload.low_stock_threshold ?? payload.reorder_level ?? 0),
             reorder_level: Number(payload.reorder_level ?? payload.low_stock_threshold ?? 0),
-            image_url: nextImageUrl,
+            image_url: null,
             is_archived: false,
           };
 
@@ -276,18 +198,17 @@ export default function ProductsPage() {
         rememberCachedProduct(activeBusinessId, {
           id: created.id,
           ...payload,
-          image_url: nextImageUrl,
+          image_url: null,
         });
         toast({
           title: 'Product added',
-          description: imageWarning || (quantity > 0 ? 'Opening stock was recorded too.' : 'Add stock later from Inventory.'),
+          description: 'Add stock later from Inventory.',
         });
       }
 
       setOpen(false);
       setEditing(null);
       setForm(emptyForm);
-      setImageFile(null);
       void load();
     } catch (error) {
       logSupabaseError('products.save', error, {
@@ -341,7 +262,7 @@ export default function ProductsPage() {
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">Products</h1>
             <p className="text-sm text-muted-foreground">
-              Manage your product catalog, prices, stock thresholds, and archived items. Add stock quantity here if you are introducing a new product with opening stock.
+              Manage your product catalog, prices, stock thresholds, and archived items. Use Inventory to add or restock stock quantities.
             </p>
           </div>
 
@@ -375,10 +296,6 @@ export default function ProductsPage() {
                   <Input value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} required />
                 </div>
                 <div className="space-y-2">
-                  <Label>SKU</Label>
-                  <Input value={form.sku} onChange={(event) => setForm((current) => ({ ...current, sku: event.target.value }))} placeholder="Auto-generate if left blank" />
-                </div>
-                <div className="space-y-2">
                   <Label>Cost Price</Label>
                   <Input type="number" min="0" step="0.01" value={form.cost_price} onChange={(event) => setForm((current) => ({ ...current, cost_price: event.target.value }))} required />
                 </div>
@@ -387,16 +304,8 @@ export default function ProductsPage() {
                   <Input type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm((current) => ({ ...current, selling_price: event.target.value }))} required />
                 </div>
                 <div className="space-y-2">
-                  <Label>Stock Quantity</Label>
-                  <Input type="number" min="0" step="1" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} required />
-                </div>
-                <div className="space-y-2">
                   <Label>Low Stock Threshold</Label>
                   <Input type="number" min="0" step="1" value={form.low_stock_threshold} onChange={(event) => setForm((current) => ({ ...current, low_stock_threshold: event.target.value }))} required />
-                </div>
-                <div className="space-y-2 sm:col-span-2">
-                  <Label>Product Image (optional)</Label>
-                  <Input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setImageFile(event.target.files?.[0] || null)} />
                 </div>
               </div>
               <Button type="submit" className="w-full" disabled={saving}>
@@ -415,7 +324,6 @@ export default function ProductsPage() {
                     <TableRow>
                       <TableHead>Product</TableHead>
                       <TableHead>Category</TableHead>
-                      <TableHead>Stock</TableHead>
                       <TableHead>Cost</TableHead>
                       <TableHead>Selling</TableHead>
                       <TableHead>Low Stock</TableHead>
@@ -432,12 +340,11 @@ export default function ProductsPage() {
                             </div>
                             <div>
                               <p className="font-medium">{row.name}</p>
-                              <p className="text-xs text-muted-foreground">{row.sku}</p>
+                              <p className="text-xs text-muted-foreground">Ready for inventory restock</p>
                             </div>
                           </div>
                         </TableCell>
                         <TableCell>{row.category}</TableCell>
-                        <TableCell>{row.quantity}</TableCell>
                         <TableCell>{formatCurrency(Number(row.cost_price || 0))}</TableCell>
                         <TableCell className="font-semibold">{formatCurrency(Number(row.selling_price || 0))}</TableCell>
                         <TableCell>{row.low_stock_threshold ?? row.reorder_level ?? 0}</TableCell>

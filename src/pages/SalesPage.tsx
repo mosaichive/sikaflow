@@ -120,6 +120,48 @@ export default function SalesPage() {
     await Promise.all([fetchAllProducts(), fetchSales()]);
   };
 
+  const updateProductQuantity = async (productId: string, nextQuantity: number) => {
+    const { error } = await supabase
+      .from('products')
+      .update({ quantity: Math.max(0, nextQuantity) } as never)
+      .eq('id', productId);
+
+    if (error) throw error;
+  };
+
+  const restoreSaleStock = async (items: any[]) => {
+    for (const item of items) {
+      if (!item?.product_id) continue;
+      const product = allProducts.find((row) => row.id === item.product_id);
+      const currentQuantity = Number(product?.quantity ?? 0);
+      await updateProductQuantity(item.product_id, currentQuantity + Number(item.quantity ?? 0));
+    }
+  };
+
+  const applyEditStockAdjustments = async ({
+    oldProductId,
+    oldQty,
+    newProduct,
+    newQty,
+  }: {
+    oldProductId: string;
+    oldQty: number;
+    newProduct: any;
+    newQty: number;
+  }) => {
+    if (oldProductId === newProduct.id) {
+      const currentQuantity = Number(newProduct.quantity ?? 0);
+      await updateProductQuantity(newProduct.id, currentQuantity + oldQty - newQty);
+      return;
+    }
+
+    const previousProduct = allProducts.find((row) => row.id === oldProductId);
+    if (previousProduct) {
+      await updateProductQuantity(oldProductId, Number(previousProduct.quantity ?? 0) + oldQty);
+    }
+    await updateProductQuantity(newProduct.id, Number(newProduct.quantity ?? 0) - newQty);
+  };
+
   const resetForm = () => {
     setProductId(''); setSize(''); setColor(''); setQuantity(1);
     setDiscount(0); setPaymentMethod('cash'); setAmountPaid(0);
@@ -265,6 +307,8 @@ export default function SalesPage() {
       }).select().single();
       if (itemErr) throw itemErr;
 
+      await updateProductQuantity(selectedProduct.id, Number(selectedProduct.quantity ?? 0) - quantity);
+
       await createSaleMovement({
         saleItemId: saleItem.id,
         product: selectedProduct,
@@ -326,6 +370,13 @@ export default function SalesPage() {
       const prevValues = oldSale ? `Product: ${oldItem?.product_name}, Qty: ${oldQty}, Price: ${oldItem?.unit_price}, Total: ${oldSale.total}, Discount: ${oldSale.discount}` : '';
 
       // 1. Delete old sale_items (triggers stock restore)
+      await applyEditStockAdjustments({
+        oldProductId,
+        oldQty,
+        newProduct: selectedProduct,
+        newQty,
+      });
+
       const priorIds = existingItems.map((item: any) => item.id).filter(Boolean);
       if (priorIds.length > 0) {
         await deleteStockMovementsBySourceCompat(priorIds);
@@ -399,6 +450,7 @@ export default function SalesPage() {
       if (sourceIds.length > 0) {
         await deleteStockMovementsBySourceCompat(sourceIds);
       }
+      await restoreSaleStock(existingItems);
       await supabase.from('sale_items').delete().eq('sale_id', saleId);
       await supabase.from('sales').delete().eq('id', saleId);
       toast({ title: 'Sale deleted successfully', description: 'Stock has been restored automatically.' });
@@ -417,6 +469,7 @@ export default function SalesPage() {
         if (sourceIds.length > 0) {
           await deleteStockMovementsBySourceCompat(sourceIds);
         }
+        await restoreSaleStock(existingItems);
         await supabase.from('sale_items').delete().eq('sale_id', saleId);
         await supabase.from('sales').delete().eq('id', saleId);
       }
