@@ -297,6 +297,38 @@ async function updateWithOptionalColumnFallback<T extends Record<string, unknown
   }
 }
 
+async function insertWithOptionalColumnFallback<T extends Record<string, unknown>>({
+  table,
+  payload,
+  optionalColumns,
+  context,
+}: {
+  table: string;
+  payload: T;
+  optionalColumns: string[];
+  context: string;
+}) {
+  const nextPayload: Record<string, unknown> = { ...payload };
+  const remainingColumns = [...optionalColumns];
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(table as any)
+      .insert(nextPayload as never)
+      .select()
+      .single();
+
+    if (!error) return data;
+
+    const missingColumn = remainingColumns.find((column) => isMissingColumnError(error, column, table));
+    if (!missingColumn) throw error;
+
+    logSupabaseError(context, error, { table, missingColumn, fallbackMode: 'insertWithoutOptionalColumn' });
+    remainingColumns.splice(remainingColumns.indexOf(missingColumn), 1);
+    delete nextPayload[missingColumn];
+  }
+}
+
 export async function updateBusinessWorkspaceRecord(
   businessId: string,
   payload: Record<string, unknown>,
@@ -322,6 +354,31 @@ export async function updateProfileRecord(
     payload,
     optionalColumns: ['onboarding_completed'],
     context: 'workspace.updateProfile',
+  });
+}
+
+export async function insertSaleRecord(
+  payload: Record<string, unknown>,
+) {
+  return insertWithOptionalColumnFallback({
+    table: 'sales',
+    payload,
+    optionalColumns: ['due_date', 'status', 'sale_channel', 'stock_status', 'stock_shortfall'],
+    context: 'workspace.insertSale',
+  });
+}
+
+export async function updateSaleRecord(
+  saleId: string,
+  payload: Record<string, unknown>,
+) {
+  return updateWithOptionalColumnFallback({
+    table: 'sales',
+    matchColumn: 'id',
+    matchValue: saleId,
+    payload,
+    optionalColumns: ['due_date', 'status', 'sale_channel', 'stock_status', 'stock_shortfall'],
+    context: 'workspace.updateSale',
   });
 }
 

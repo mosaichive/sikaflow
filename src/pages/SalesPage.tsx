@@ -25,8 +25,10 @@ import { isNegativeStockSale } from '@/lib/sales-inventory';
 import {
   deleteStockMovementsBySourceCompat,
   insertStockMovementCompat,
+  insertSaleRecord,
   loadProductsCompat,
   logSupabaseError,
+  updateSaleRecord,
 } from '@/lib/workspace';
 
 export default function SalesPage() {
@@ -290,7 +292,7 @@ export default function SalesPage() {
     }
     setLoading(true);
     try {
-      const { data: sale, error: saleErr } = await supabase.from('sales').insert({
+      const sale = await insertSaleRecord({
         business_id: businessId,
         sale_date: new Date(saleDate).toISOString(),
         customer_name: customerName || 'Walk-in',
@@ -307,8 +309,7 @@ export default function SalesPage() {
         stock_status: stockShortfall > 0 ? 'negative_stock_sale' : 'in_stock',
         stock_shortfall: stockShortfall,
         notes: saleNotes,
-      }).select().single();
-      if (saleErr) throw saleErr;
+      });
 
       const { data: saleItem, error: itemErr } = await supabase.from('sale_items').insert({
         business_id: businessId,
@@ -421,7 +422,7 @@ export default function SalesPage() {
       await supabase.from('sale_items').delete().eq('sale_id', editSaleId);
 
       // 2. Update sale record
-      const { error: saleErr } = await supabase.from('sales').update({
+      await updateSaleRecord(editSaleId, {
         sale_date: new Date(saleDate).toISOString(),
         customer_name: customerName || 'Walk-in',
         customer_phone: customerPhone,
@@ -435,8 +436,7 @@ export default function SalesPage() {
         stock_status: stockShortfall > 0 ? 'negative_stock_sale' : 'in_stock',
         stock_shortfall: stockShortfall,
         notes: saleNotes,
-      }).eq('id', editSaleId);
-      if (saleErr) throw saleErr;
+      });
 
       // 3. Insert new sale_items (triggers stock deduction)
       const { data: saleItem, error: itemErr } = await supabase.from('sale_items').insert({
