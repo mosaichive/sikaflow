@@ -16,7 +16,7 @@ import CustomersPage from "./pages/CustomersPage";
 import ExpensesPage from "./pages/ExpensesPage";
 import ReportsPage from "./pages/ReportsPage";
 import SettingsPage from "./pages/SettingsPage";
-import SavingsInvestmentsPage from "./pages/SavingsInvestmentsPage";
+import SavingsPage from "./pages/SavingsPage";
 import BillingPage from "./pages/BillingPage";
 import SupportPage from "./pages/SupportPage";
 import OtherIncomePage from "./pages/OtherIncomePage";
@@ -141,7 +141,7 @@ const App = () => (
                 <Route path="/staff" element={<ProtectedRoute adminOnly><StaffUsersPage /></ProtectedRoute>} />
                 <Route path="/announcements" element={<ProtectedRoute allowReadOnly allowOnboarding><TenantAnnouncementsPage /></ProtectedRoute>} />
                 <Route path="/support" element={<ProtectedRoute allowReadOnly allowOnboarding><SupportPage /></ProtectedRoute>} />
-                <Route path="/savings" element={<ProtectedRoute adminOnly><SavingsInvestmentsPage /></ProtectedRoute>} />
+                <Route path="/savings" element={<ProtectedRoute allowedRoles={['admin', 'manager']}><SavingsPage /></ProtectedRoute>} />
                 <Route path="/settings" element={<ProtectedRoute adminOnly allowReadOnly><SettingsPage /></ProtectedRoute>} />
                 <Route path="/billing" element={<ProtectedRoute adminOnly allowReadOnly><BillingPage /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />

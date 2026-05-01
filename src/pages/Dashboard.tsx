@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, Boxes, HandCoins, Package, Receipt, ShoppingCart, TrendingUp, Wallet } from 'lucide-react';
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, Boxes, HandCoins, Package, Receipt, ShoppingCart, TrendingUp, WalletCards } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip } from 'recharts';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
@@ -65,7 +65,14 @@ type OtherIncomeRow = {
   income_date: string;
 };
 
-type SavingsRow = { amount: number | string; savings_date: string };
+type SavingsRow = {
+  id: string;
+  amount: number | string;
+  savings_date: string;
+  source?: string | null;
+  note?: string | null;
+  reference?: string | null;
+};
 type InvestmentRow = { amount: number | string; investment_date: string };
 
 type DashboardData = {
@@ -149,6 +156,21 @@ function buildRecentActivity(data: DashboardData, from: string, to: string) {
         date: row.expense_date,
         icon: Receipt,
         tone: 'text-rose-500',
+      })),
+    ...data.savings
+      .filter((row) => inRange(row.savings_date, from, to))
+      .map((row) => ({
+        id: `savings-${row.id}`,
+        title: 'Savings transfer',
+        subtitle:
+          row.note ||
+          row.reference ||
+          (row.source ? `${String(row.source).replace('_', ' ')} savings` : new Date(row.savings_date).toLocaleDateString('en-GH')),
+        amount: toNumber(row.amount),
+        direction: 'out' as const,
+        date: row.savings_date,
+        icon: WalletCards,
+        tone: 'text-amber-500',
       })),
   ];
 
@@ -277,7 +299,7 @@ export default function Dashboard() {
         loadProductsCompat(false, businessId),
         supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
         supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
-        supabase.from('savings').select('amount,savings_date'),
+        supabase.from('savings').select('id,amount,savings_date,source,note,reference'),
         supabase.from('investments').select('amount,investment_date'),
       ]);
 

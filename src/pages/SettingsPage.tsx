@@ -859,11 +859,11 @@ export default function SettingsPage() {
         {isAdmin && (
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2"><Landmark className="h-4 w-4" />Banks & Account Details</CardTitle>
+              <CardTitle className="text-base flex items-center gap-2"><Landmark className="h-4 w-4" />Savings Destinations & Account Details</CardTitle>
               <Dialog open={bankOpen} onOpenChange={(o) => { setBankOpen(o); if (!o) { setBankForm(emptyBank); setEditBankId(null); } }}>
-                <DialogTrigger asChild><Button size="sm"><Plus className="h-4 w-4 mr-1" />Add Bank</Button></DialogTrigger>
+                <DialogTrigger asChild><Button size="sm"><Plus className="h-4 w-4 mr-1" />Add Destination</Button></DialogTrigger>
                 <DialogContent className="max-w-lg">
-                  <DialogHeader><DialogTitle>{editBankId ? 'Edit' : 'Add'} Bank / Account</DialogTitle></DialogHeader>
+                  <DialogHeader><DialogTitle>{editBankId ? 'Edit' : 'Add'} Savings Destination</DialogTitle></DialogHeader>
                   <div className="grid gap-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div><Label>Bank Name</Label><Input value={bankForm.bank_name} onChange={e => setBankForm(p => ({ ...p, bank_name: e.target.value }))} placeholder="e.g. Ecobank" /></div>
@@ -873,6 +873,7 @@ export default function SettingsPage() {
                           <SelectContent>
                             <SelectItem value="bank">Bank Account</SelectItem>
                             <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                            <SelectItem value="susu">Susu</SelectItem>
                             <SelectItem value="other">Other</SelectItem>
                           </SelectContent>
                         </Select>
@@ -888,7 +889,7 @@ export default function SettingsPage() {
                       <div><Label>Mobile Money Number</Label><Input value={bankForm.mobile_money_number} onChange={e => setBankForm(p => ({ ...p, mobile_money_number: e.target.value }))} /></div>
                     </div>
                     <div><Label>Note</Label><Textarea value={bankForm.note} onChange={e => setBankForm(p => ({ ...p, note: e.target.value }))} rows={2} /></div>
-                    <Button onClick={handleBankSave} className="w-full">{editBankId ? 'Update' : 'Save'} Bank</Button>
+                    <Button onClick={handleBankSave} className="w-full">{editBankId ? 'Update' : 'Save'} Destination</Button>
                   </div>
                 </DialogContent>
               </Dialog>

@@ -1,5 +1,5 @@
 import {
-  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Receipt, BarChart3, Settings, LogOut, Moon, Sun, Megaphone, ClipboardList, Banknote, Shield
+  LayoutDashboard, ShoppingCart, Package, Boxes, Users, Receipt, BarChart3, Settings, LogOut, Moon, Sun, Megaphone, ClipboardList, Banknote, Shield, PiggyBank
 } from 'lucide-react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/context/AuthContext';
@@ -21,6 +21,7 @@ const allItems = [
   { title: 'Orders', url: '/orders', icon: ClipboardList },
   { title: 'Other Income', url: '/other-income', icon: Banknote },
   { title: 'Expenses', url: '/expenses', icon: Receipt },
+  { title: 'Savings', url: '/savings', icon: PiggyBank },
   { title: 'Reports', url: '/reports', icon: BarChart3 },
   { title: 'Staff / Users', url: '/staff', icon: Shield },
   { title: 'Announcements', url: '/announcements', icon: Megaphone },
@@ -29,7 +30,7 @@ const allItems = [
 
 const salespersonItems = ['Dashboard', 'Sales / POS', 'Customers', 'Orders', 'Announcements'];
 const distributorItems = ['Dashboard', 'Inventory', 'Orders', 'Announcements'];
-const managerItems = ['Dashboard', 'Sales / POS', 'Products', 'Inventory', 'Customers', 'Orders', 'Other Income', 'Expenses', 'Reports', 'Announcements'];
+const managerItems = ['Dashboard', 'Sales / POS', 'Products', 'Inventory', 'Customers', 'Orders', 'Other Income', 'Expenses', 'Savings', 'Reports', 'Announcements'];
 
 export function AppSidebar() {
   const { state } = useSidebar();
