@@ -432,6 +432,7 @@ export default function Dashboard() {
   }, [data, dateRange.from, dateRange.to]);
 
   const metrics = useMemo(() => calculateDashboardTotals(filtered), [filtered]);
+  const businessWideMetrics = useMemo(() => calculateDashboardTotals(data), [data]);
   const dailySales = useMemo(() => sumTodaySales(data.sales), [data.sales]);
   const yesterdaySales = useMemo(() => {
     const yesterday = new Date();
@@ -539,9 +540,9 @@ export default function Dashboard() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <MetricCard
             title="Available Business Money"
-            value={formatCurrency(metrics.availableBusinessMoney)}
+            value={formatCurrency(businessWideMetrics.availableBusinessMoney)}
             icon={WalletCards}
-            helper="Paid sales + other income + investor funds - expenses - expensed restocks - savings - investments"
+            helper="Business-wide cash: paid sales + other income + investor funds - expenses - expensed restocks - savings - investments"
             tooltip={SIKAFLOW_TOOLTIPS.availableBusinessMoney}
           />
           <MetricCard
