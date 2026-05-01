@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/constants';
-import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateBusinessWideAvailableMoney, calculateFinancialSnapshot } from '@/lib/business-money';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney, calculateFinancialSnapshot } from '@/lib/business-money';
 import { useBusiness } from '@/context/BusinessContext';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -249,7 +249,7 @@ export default function SavingsPage() {
 
   const availableBusinessMoney = useMemo(
     () =>
-      calculateBusinessWideAvailableMoney({
+      calculateAvailableBusinessMoney({
         sales,
         otherIncome,
         expenses,

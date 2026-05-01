@@ -16,7 +16,7 @@ import { useBusiness } from '@/context/BusinessContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency, PAYMENT_METHODS, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { calculateStockValue, toNumber } from '@/lib/sales-inventory';
-import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateBusinessWideAvailableMoney } from '@/lib/business-money';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney } from '@/lib/business-money';
 import { AlertTriangle, Boxes, PackagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -169,7 +169,7 @@ export default function InventoryPage() {
       setExpenses([]);
     }
 
-    const money = calculateBusinessWideAvailableMoney({
+    const money = calculateAvailableBusinessMoney({
       sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as any[]) : [],
       otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as any[]) : [],
       expenses: expensesRes.status === 'fulfilled' ? ((expensesRes.value.data || []) as any[]) : [],

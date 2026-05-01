@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCurrency, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { calculateDashboardTotals, getPaidAmount, getIsoDate, sumTodaySales, toNumber } from '@/lib/sales-inventory';
+import { calculateAvailableBusinessMoney, warnIfFinancialInconsistency } from '@/lib/business-money';
 import { cn } from '@/lib/utils';
 import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
 
@@ -432,7 +433,30 @@ export default function Dashboard() {
   }, [data, dateRange.from, dateRange.to]);
 
   const metrics = useMemo(() => calculateDashboardTotals(filtered), [filtered]);
-  const businessWideMetrics = useMemo(() => calculateDashboardTotals(data), [data]);
+  const availableBusinessMoney = useMemo(
+    () =>
+      calculateAvailableBusinessMoney({
+        sales: data.sales,
+        saleItems: data.saleItems,
+        products: data.products,
+        otherIncome: data.otherIncome,
+        expenses: data.expenses,
+        savings: data.savings,
+        investments: data.investments,
+        investorFunds: data.investorFunds,
+      }),
+    [data],
+  );
+
+  useEffect(() => {
+    const businessWideMetrics = calculateDashboardTotals(data);
+    warnIfFinancialInconsistency(
+      'dashboard.availableBusinessMoney',
+      availableBusinessMoney,
+      businessWideMetrics.availableBusinessMoney,
+    );
+  }, [availableBusinessMoney, data]);
+
   const dailySales = useMemo(() => sumTodaySales(data.sales), [data.sales]);
   const yesterdaySales = useMemo(() => {
     const yesterday = new Date();
@@ -540,7 +564,7 @@ export default function Dashboard() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <MetricCard
             title="Available Business Money"
-            value={formatCurrency(businessWideMetrics.availableBusinessMoney)}
+            value={formatCurrency(availableBusinessMoney)}
             icon={WalletCards}
             helper="Business-wide cash: paid sales + other income + investor funds - expenses - expensed restocks - savings - investments"
             tooltip={SIKAFLOW_TOOLTIPS.availableBusinessMoney}
