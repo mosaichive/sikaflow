@@ -518,7 +518,7 @@ export default function Dashboard() {
           <MetricCard
             title="Available Business Money"
             value={formatCurrency(metrics.availableBusinessMoney)}
-            icon={Wallet}
+            icon={WalletCards}
             helper="Paid sales + other income - expenses - savings - investments"
             tooltip={SIKAFLOW_TOOLTIPS.availableBusinessMoney}
           />
