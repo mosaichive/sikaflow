@@ -128,12 +128,12 @@ export default function InventoryPage() {
   const selectedProduct = products.find((product) => product.id === form.product_id) || null;
   const stockValue = useMemo(() => calculateStockValue(products, 'cost'), [products]);
   const stockProducts = useMemo(
-    () => products.filter((product) => Math.max(0, toNumber(product.quantity)) > 0),
+    () => products.filter((product) => toNumber(product.quantity) !== 0),
     [products],
   );
   const lowStockProducts = useMemo(
-    () => stockProducts.filter((product) => product.quantity <= toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0)),
-    [stockProducts],
+    () => products.filter((product) => toNumber(product.quantity) <= toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0)),
+    [products],
   );
   const totalRestockCost = useMemo(
     () => Math.max(0, Number(form.quantity || 0)) * Math.max(0, Number(form.unit_cost || 0)),
@@ -476,11 +476,16 @@ export default function InventoryPage() {
                     <TableBody>
                       {stockProducts.map((product) => (
                         <TableRow key={product.id}>
-                          <TableCell className="font-medium">{product.name}</TableCell>
+                          <TableCell className="font-medium">
+                            <div className="flex items-center gap-2">
+                              <span>{product.name}</span>
+                              {toNumber(product.quantity) < 0 ? <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">Negative Stock</span> : null}
+                            </div>
+                          </TableCell>
                           <TableCell>{product.category || '—'}</TableCell>
-                          <TableCell>{product.quantity}</TableCell>
+                          <TableCell className={toNumber(product.quantity) < 0 ? 'font-semibold text-amber-300' : undefined}>{product.quantity}</TableCell>
                           <TableCell>{product.low_stock_threshold ?? product.reorder_level ?? 0}</TableCell>
-                          <TableCell>{formatCurrency(product.quantity * Number(product.cost_price || 0))}</TableCell>
+                          <TableCell>{formatCurrency(toNumber(product.quantity) * Number(product.cost_price || 0))}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -506,7 +511,14 @@ export default function InventoryPage() {
                   <div key={movement.id} className="rounded-2xl border border-border/60 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold capitalize">{movement.movement_type.replaceAll('_', ' ')}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold capitalize">{movement.movement_type.replaceAll('_', ' ')}</p>
+                          {movement.movement_type === 'sale' && movement.quantity_after < 0 ? (
+                            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+                              Negative Stock Sale
+                            </span>
+                          ) : null}
+                        </div>
                         <p className="text-xs text-muted-foreground">{movement.note || movement.created_by_name || 'Inventory update'}</p>
                       </div>
                       <p className={`text-sm font-semibold ${movement.quantity_change >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>

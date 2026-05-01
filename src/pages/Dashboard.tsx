@@ -24,6 +24,7 @@ type SaleRow = {
   amount_paid: number | string;
   payment_status: string;
   status?: string | null;
+  stock_status?: string | null;
   customer_name?: string | null;
   reference?: string | null;
 };
@@ -404,6 +405,10 @@ export default function Dashboard() {
         .slice(0, 4),
     [data.products],
   );
+  const negativeStockProducts = useMemo(
+    () => data.products.filter((product) => !product.is_archived && toNumber(product.quantity) < 0),
+    [data.products],
+  );
 
   if (loading) {
     return (
@@ -473,6 +478,19 @@ export default function Dashboard() {
             </Select>
           </div>
         </section>
+
+        {negativeStockProducts.length > 0 ? (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+            <div className="space-y-1">
+              <p className="font-medium text-amber-200">Some products have negative stock. Restock required.</p>
+              <p className="text-xs text-amber-100/80">
+                {negativeStockProducts.slice(0, 4).map((product) => `${product.name} (${toNumber(product.quantity)})`).join(', ')}
+                {negativeStockProducts.length > 4 ? ` and ${negativeStockProducts.length - 4} more` : ''}
+              </p>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <MetricCard

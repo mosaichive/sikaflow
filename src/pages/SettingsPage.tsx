@@ -92,6 +92,7 @@ export default function SettingsPage() {
   const [businessLogoPreview, setBusinessLogoPreview] = useState<string | null>(null);
   const [businessLogoFile, setBusinessLogoFile] = useState<File | null>(null);
   const [businessLogoUploading, setBusinessLogoUploading] = useState(false);
+  const [salesInventorySaving, setSalesInventorySaving] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [passwordSaving, setPasswordSaving] = useState(false);
 
@@ -333,6 +334,35 @@ export default function SettingsPage() {
     setBusinessLogoPreview(null);
     await refreshBusiness();
     toast({ title: 'Business logo removed' });
+  };
+
+  const handleAllowSalesWithoutStockChange = async (checked: boolean) => {
+    if (!businessId || !isAdmin) return;
+    setSalesInventorySaving(true);
+    try {
+      const { error } = await supabase
+        .from('businesses' as any)
+        .update({ allow_sales_without_stock: checked })
+        .eq('id', businessId);
+
+      if (error) throw error;
+
+      await refreshBusiness();
+      toast({
+        title: 'Sales setting updated',
+        description: checked
+          ? 'Backorder and negative-stock sales are now allowed for this business.'
+          : 'Strict stock control is now on. Sales will stop when stock is unavailable.',
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Could not update sales setting',
+        description: error.message || 'Something went wrong',
+        variant: 'destructive',
+      });
+    } finally {
+      setSalesInventorySaving(false);
+    }
   };
 
   // ---- User Management (per-business, server-enforced) ----
@@ -678,6 +708,36 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-base">Sales / Inventory Settings</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-muted/20 p-4">
+              <div className="space-y-1">
+                <Label htmlFor="allow-sales-without-stock" className="text-sm font-medium">
+                  Allow sales without stock?
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  When off, SikaFlow blocks sales if stock is zero or insufficient. When on, staff can continue with negative stock and backorder sales.
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Badge variant={business?.allow_sales_without_stock ? 'secondary' : 'outline'}>
+                  {business?.allow_sales_without_stock ? 'ON' : 'OFF'}
+                </Badge>
+                <Switch
+                  id="allow-sales-without-stock"
+                  checked={Boolean(business?.allow_sales_without_stock)}
+                  disabled={!isAdmin || salesInventorySaving}
+                  onCheckedChange={handleAllowSalesWithoutStockChange}
+                />
+              </div>
+            </div>
+            {!isAdmin ? (
+              <p className="text-[11px] text-muted-foreground">Only admins can change this setting.</p>
+            ) : null}
           </CardContent>
         </Card>
 

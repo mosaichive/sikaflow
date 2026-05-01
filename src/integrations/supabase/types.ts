@@ -107,6 +107,7 @@ export type Database = {
       }
       businesses: {
         Row: {
+          allow_sales_without_stock: boolean
           business_type: string
           created_at: string
           email: string | null
@@ -125,6 +126,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          allow_sales_without_stock?: boolean
           business_type?: string
           created_at?: string
           email?: string | null
@@ -143,6 +145,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          allow_sales_without_stock?: boolean
           business_type?: string
           created_at?: string
           email?: string | null
@@ -998,8 +1001,12 @@ export type Database = {
           payment_method: string
           payment_status: string
           sale_date: string
+          sale_channel?: string
           staff_id: string
           staff_name: string | null
+          status?: string
+          stock_shortfall?: number
+          stock_status?: string
           subtotal: number
           total: number
         }
@@ -1017,8 +1024,12 @@ export type Database = {
           payment_method?: string
           payment_status?: string
           sale_date?: string
+          sale_channel?: string
           staff_id: string
           staff_name?: string | null
+          status?: string
+          stock_shortfall?: number
+          stock_status?: string
           subtotal?: number
           total?: number
         }
@@ -1036,8 +1047,12 @@ export type Database = {
           payment_method?: string
           payment_status?: string
           sale_date?: string
+          sale_channel?: string
           staff_id?: string
           staff_name?: string | null
+          status?: string
+          stock_shortfall?: number
+          stock_status?: string
           subtotal?: number
           total?: number
         }

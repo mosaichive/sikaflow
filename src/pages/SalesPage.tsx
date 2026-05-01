@@ -21,6 +21,7 @@ import { Plus, ShoppingCart, Trash2, Eye, Info, Pencil, FileText, ReceiptText } 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SaleDocumentViewerDialog } from '@/components/sales/SaleDocumentViewerDialog';
+import { isNegativeStockSale } from '@/lib/sales-inventory';
 import {
   deleteStockMovementsBySourceCompat,
   insertStockMovementCompat,
@@ -54,6 +55,7 @@ export default function SalesPage() {
   const [deleting, setDeleting] = useState(false);
   const [historyDateFrom, setHistoryDateFrom] = useState('');
   const [historyDateTo, setHistoryDateTo] = useState('');
+  const [pendingStockOverrideAction, setPendingStockOverrideAction] = useState<'new' | 'edit' | null>(null);
 
   // Form state (shared for new + edit)
   const [productId, setProductId] = useState('');
@@ -85,6 +87,7 @@ export default function SalesPage() {
   const paymentStatus = balance <= 0 ? 'paid' : amountPaid > 0 ? 'partial' : 'unpaid';
   const isPriceOverridden = overridePrice !== null && overridePrice !== defaultPrice;
   const canOverridePrice = isAdmin || isManager;
+  const allowSalesWithoutStock = Boolean(business?.allow_sales_without_stock);
 
   useEffect(() => {
     fetchData();
@@ -102,7 +105,7 @@ export default function SalesPage() {
   const fetchAllProducts = async () => {
     const data = await loadProductsCompat(false, businessId);
     setAllProducts(data || []);
-    setProducts((data || []).filter((p: any) => p.quantity > 0));
+    setProducts((data || []).filter((p: any) => Number(p.quantity ?? 0) > 0));
   };
 
   const fetchSales = async () => {
@@ -123,7 +126,7 @@ export default function SalesPage() {
   const updateProductQuantity = async (productId: string, nextQuantity: number) => {
     const { error } = await supabase
       .from('products')
-      .update({ quantity: Math.max(0, nextQuantity) } as never)
+      .update({ quantity: nextQuantity } as never)
       .eq('id', productId);
 
     if (error) throw error;
@@ -179,6 +182,7 @@ export default function SalesPage() {
     unitCost,
     soldPrice,
     note,
+    isNegativeStockSale = false,
   }: {
     saleItemId: string;
     product: any;
@@ -186,9 +190,10 @@ export default function SalesPage() {
     unitCost: number;
     soldPrice: number;
     note: string;
+    isNegativeStockSale?: boolean;
   }) => {
     if (!businessId || !user) return;
-    const quantityAfter = Math.max(0, Number(product.quantity ?? 0) - soldQuantity);
+    const quantityAfter = Number(product.quantity ?? 0) - soldQuantity;
     const result = await insertStockMovementCompat({
       business_id: businessId,
       product_id: product.id,
@@ -199,7 +204,7 @@ export default function SalesPage() {
       unit_price: soldPrice,
       source_table: 'sale_items',
       source_id: saleItemId,
-      note,
+      note: isNegativeStockSale ? [note, 'Negative Stock Sale'].filter(Boolean).join(' • ') : note,
       created_by: user.id,
       created_by_name: displayName || user.email || '',
       movement_date: new Date(saleDate).toISOString(),
@@ -262,14 +267,25 @@ export default function SalesPage() {
     }
   };
 
-  const handleNewSale = async () => {
+  const getSelectedProductQuantity = (product: any) => Number(product?.quantity ?? 0);
+  const getStockShortfall = (availableQuantity: number, requestedQuantity: number) =>
+    Math.max(0, requestedQuantity - Math.max(0, availableQuantity));
+
+  const handleNewSale = async (overrideStockCheck = false) => {
     if (!selectedProduct || !user || !businessId) return;
-    if (quantity > Number(selectedProduct.quantity ?? 0)) {
+    const availableQuantity = getSelectedProductQuantity(selectedProduct);
+    const stockShortfall = getStockShortfall(availableQuantity, quantity);
+
+    if (stockShortfall > 0 && !allowSalesWithoutStock) {
       toast({
-        title: 'Not enough stock',
-        description: `Only ${selectedProduct.quantity} unit(s) of ${selectedProduct.name} are available.`,
+        title: 'Out of stock',
+        description: 'This product is out of stock. Please restock before selling.',
         variant: 'destructive',
       });
+      return;
+    }
+    if (stockShortfall > 0 && allowSalesWithoutStock && !overrideStockCheck) {
+      setPendingStockOverrideAction('new');
       return;
     }
     setLoading(true);
@@ -288,6 +304,8 @@ export default function SalesPage() {
         due_date: dueDate ? new Date(`${dueDate}T00:00:00`).toISOString() : null,
         status: 'completed',
         sale_channel: 'pos',
+        stock_status: stockShortfall > 0 ? 'negative_stock_sale' : 'in_stock',
+        stock_shortfall: stockShortfall,
         notes: saleNotes,
       }).select().single();
       if (saleErr) throw saleErr;
@@ -316,6 +334,7 @@ export default function SalesPage() {
         unitCost: costPrice,
         soldPrice: unitPrice,
         note: saleNotes || 'POS sale',
+        isNegativeStockSale: stockShortfall > 0,
       });
 
       if (customerName && customerName !== 'Walk-in') {
@@ -326,13 +345,14 @@ export default function SalesPage() {
       }
 
       toast({ title: 'Sale recorded!', description: `${selectedProduct.name} — ${formatCurrency(total)}` });
+      setPendingStockOverrideAction(null);
       resetForm(); setOpen(false); fetchData();
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     } finally { setLoading(false); }
   };
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = async (overrideStockCheck = false) => {
     if (!selectedProduct || !user || !editSaleId || !editOriginal) return;
     setEditLoading(true);
     try {
@@ -341,14 +361,25 @@ export default function SalesPage() {
       const oldQty = editOriginal.quantity;
       const newProductId = selectedProduct.id;
       const newQty = quantity;
+      let stockShortfall = 0;
 
       if (oldProductId === newProductId) {
         // Same product — check stock for increase
         const qtyDiff = newQty - oldQty;
         if (qtyDiff > 0) {
           const prod = allProducts.find(p => p.id === newProductId);
-          if (prod && prod.quantity < qtyDiff) {
-            toast({ title: 'Insufficient stock for this update', description: `Only ${prod.quantity} available to add.`, variant: 'destructive' });
+          stockShortfall = Math.max(0, qtyDiff - getSelectedProductQuantity(prod));
+          if (stockShortfall > 0 && !allowSalesWithoutStock) {
+            toast({
+              title: 'Out of stock',
+              description: 'This product is out of stock. Please restock before selling.',
+              variant: 'destructive',
+            });
+            setEditLoading(false);
+            return;
+          }
+          if (stockShortfall > 0 && allowSalesWithoutStock && !overrideStockCheck) {
+            setPendingStockOverrideAction('edit');
             setEditLoading(false);
             return;
           }
@@ -356,8 +387,14 @@ export default function SalesPage() {
       } else {
         // Different product — check new product has enough stock
         const newProd = allProducts.find(p => p.id === newProductId);
-        if (newProd && newProd.quantity < newQty) {
-          toast({ title: 'Insufficient stock for this update', description: `${newProd.name} only has ${newProd.quantity} in stock.`, variant: 'destructive' });
+        stockShortfall = Math.max(0, newQty - getSelectedProductQuantity(newProd));
+        if (stockShortfall > 0 && !allowSalesWithoutStock) {
+          toast({ title: 'Out of stock', description: 'This product is out of stock. Please restock before selling.', variant: 'destructive' });
+          setEditLoading(false);
+          return;
+        }
+        if (stockShortfall > 0 && allowSalesWithoutStock && !overrideStockCheck) {
+          setPendingStockOverrideAction('edit');
           setEditLoading(false);
           return;
         }
@@ -395,6 +432,8 @@ export default function SalesPage() {
         due_date: dueDate ? new Date(`${dueDate}T00:00:00`).toISOString() : null,
         status: 'completed',
         sale_channel: 'pos',
+        stock_status: stockShortfall > 0 ? 'negative_stock_sale' : 'in_stock',
+        stock_shortfall: stockShortfall,
         notes: saleNotes,
       }).eq('id', editSaleId);
       if (saleErr) throw saleErr;
@@ -422,6 +461,7 @@ export default function SalesPage() {
         unitCost: costPrice,
         soldPrice: unitPrice,
         note: saleNotes || 'Edited POS sale',
+        isNegativeStockSale: stockShortfall > 0,
       });
 
       // 4. Audit log
@@ -434,6 +474,7 @@ export default function SalesPage() {
       });
 
       toast({ title: 'Sales transaction updated successfully' });
+      setPendingStockOverrideAction(null);
       resetForm(); setOpen(false);
       setSaleItems(prev => { const next = { ...prev }; delete next[editSaleId]; return next; });
       fetchData();
@@ -498,7 +539,7 @@ export default function SalesPage() {
   const detailSale = sales.find(s => s.id === detailSaleId);
   const detailItems = detailSaleId ? saleItems[detailSaleId] || [] : [];
   // For the form, show all products when editing (including 0-stock), only in-stock for new
-  const formProducts = editSaleId ? allProducts : products;
+  const formProducts = editSaleId ? allProducts : (allowSalesWithoutStock ? allProducts : products);
 
   const openDocument = (document: SaleDocumentRecord) => {
     setActiveDocument(document);
@@ -734,6 +775,35 @@ export default function SalesPage() {
           </DialogContent>
         </Dialog>
 
+        <AlertDialog open={pendingStockOverrideAction !== null} onOpenChange={(nextOpen) => { if (!nextOpen) setPendingStockOverrideAction(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Continue sale?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This product is out of stock. Continue anyway?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setPendingStockOverrideAction(null)}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  const action = pendingStockOverrideAction;
+                  setPendingStockOverrideAction(null);
+                  if (action === 'new') {
+                    void handleNewSale(true);
+                  } else if (action === 'edit') {
+                    void handleSaveEdit(true);
+                  }
+                }}
+              >
+                Continue Sale
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         {/* Sale Detail Dialog */}
         <Dialog open={!!detailSaleId} onOpenChange={o => { if (!o) setDetailSaleId(null); }}>
           <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -744,7 +814,13 @@ export default function SalesPage() {
                   <div><span className="text-muted-foreground">Date:</span> {new Date(detailSale.sale_date).toLocaleDateString()}</div>
                   <div><span className="text-muted-foreground">Customer:</span> {detailSale.customer_name || 'Walk-in'}</div>
                   <div><span className="text-muted-foreground">Total:</span> <span className="font-bold">{formatCurrency(Number(detailSale.total))}</span></div>
-                  <div><span className="text-muted-foreground">Status:</span> <StatusBadge status={detailSale.payment_status} /></div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">Status:</span>
+                    <StatusBadge status={detailSale.payment_status} />
+                    {isNegativeStockSale(detailSale) ? (
+                      <Badge variant="destructive">Negative Stock Sale</Badge>
+                    ) : null}
+                  </div>
                   {detailSale.notes && <div className="col-span-2"><span className="text-muted-foreground">Note:</span> {detailSale.notes}</div>}
                 </div>
                 {detailItems.length > 0 ? (
@@ -875,7 +951,16 @@ export default function SalesPage() {
                         <TableCell>{formatCurrency(Number(sale.amount_paid))}</TableCell>
                         <TableCell className={Number(sale.balance) > 0 ? 'text-destructive font-semibold' : ''}>{formatCurrency(Number(sale.balance))}</TableCell>
                         <TableCell className="capitalize text-xs">{sale.payment_method?.replace('_', ' ')}</TableCell>
-                        <TableCell><StatusBadge status={sale.payment_status} /></TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusBadge status={sale.payment_status} />
+                            {isNegativeStockSale(sale) ? (
+                              <Badge variant="destructive" className="text-[10px]">
+                                Negative Stock Sale
+                              </Badge>
+                            ) : null}
+                          </div>
+                        </TableCell>
                         <TableCell className="text-right">
                           <div className="flex gap-1 justify-end">
                             <Button variant="ghost" size="icon" onClick={() => { setDetailSaleId(sale.id); fetchSaleItems(sale.id); }} title="View details">

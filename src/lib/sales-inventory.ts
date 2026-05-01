@@ -10,6 +10,7 @@ type SaleLike = {
   discount?: NumberLike;
   payment_status?: string | null;
   status?: string | null;
+  stock_status?: string | null;
   sale_channel?: string | null;
   sale_date?: string | null;
 };
@@ -67,6 +68,10 @@ export function getPaidAmount(row: SaleLike) {
 
 export function isRecognizedSale(row: SaleLike) {
   return !isCancelledStatus(row.status) && isDeliveredSale(row) && getPaidAmount(row) > 0;
+}
+
+export function isNegativeStockSale(row: SaleLike) {
+  return normalizeText(row.stock_status) === 'negative_stock_sale' || normalizeText(row.stock_status) === 'backorder_sale';
 }
 
 export function calculateSalesIncome(sales: SaleLike[]) {
@@ -145,12 +150,13 @@ export function calculateDashboardTotals({
   const money = calculateAvailableBusinessMoney({ sales, otherIncome, expenses, savings, investments });
   const salesProfit = calculateSalesProfit(sales, saleItems);
   const totalExpenses = calculateTotalExpenses(expenses);
-  const stockLeft = products.reduce((sum, product) => sum + Math.max(0, toNumber(product.quantity)), 0);
+  const stockLeft = products.reduce((sum, product) => sum + toNumber(product.quantity), 0);
   const lowStockCount = products.filter((product) => {
     if (product.is_archived) return false;
     const threshold = toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0);
-    return Math.max(0, toNumber(product.quantity)) <= threshold;
+    return toNumber(product.quantity) <= threshold;
   }).length;
+  const negativeStockCount = products.filter((product) => !product.is_archived && toNumber(product.quantity) < 0).length;
 
   return {
     availableBusinessMoney: money.availableBusinessMoney,
@@ -162,6 +168,7 @@ export function calculateDashboardTotals({
     totalExpenses,
     stockLeft,
     lowStockCount,
+    negativeStockCount,
   };
 }
 

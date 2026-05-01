@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 
 export interface Business {
+  allow_sales_without_stock?: boolean;
   id: string;
   name: string;
   slug: string | null;

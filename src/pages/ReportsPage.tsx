@@ -9,6 +9,7 @@ import {
   calculateTotalExpenses,
   calculateTotalOtherIncome,
   getPaidAmount,
+  isNegativeStockSale,
   isRecognizedSale,
   toNumber,
 } from '@/lib/sales-inventory';
@@ -137,6 +138,7 @@ export default function ReportsPage() {
   const [customTo, setCustomTo] = useState(formatDateInput(now));
   const [loading, setLoading] = useState(true);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [salesStockFilter, setSalesStockFilter] = useState<'all' | 'negative_only'>('all');
   const [raw, setRaw] = useState<RawReportData>({
     sales: [],
     saleItems: [],
@@ -276,8 +278,8 @@ export default function ReportsPage() {
     const otherIncome = calculateTotalOtherIncome(filtered.otherIncome);
     const expenses = calculateTotalExpenses(filtered.expenses);
     const salesProfit = calculateSalesProfit(filtered.sales, recognizedSaleItems);
-    const stockLeft = raw.products.reduce((sum, product) => sum + Math.max(0, toNumber(product.quantity)), 0);
-    const lowStockCount = raw.products.filter((product) => Math.max(0, toNumber(product.quantity)) <= Math.max(0, toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0))).length;
+    const stockLeft = raw.products.reduce((sum, product) => sum + toNumber(product.quantity), 0);
+    const lowStockCount = raw.products.filter((product) => toNumber(product.quantity) <= Math.max(0, toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0))).length;
     return {
       salesIncome,
       otherIncome,
@@ -364,6 +366,11 @@ export default function ReportsPage() {
 
     return Array.from(grouped.values()).sort((left, right) => (right.moneyIn - right.moneyOut) - (left.moneyIn - left.moneyOut));
   }, [filtered.expenses, filtered.otherIncome, recognizedSales]);
+
+  const salesReportRows = useMemo(() => {
+    const rows = filtered.sales.filter((sale) => salesStockFilter === 'all' || isNegativeStockSale(sale));
+    return rows.sort((left, right) => new Date(right.sale_date).getTime() - new Date(left.sale_date).getTime());
+  }, [filtered.sales, salesStockFilter]);
 
   const creditReport = useMemo(() => {
     const grouped = new Map<string, { customerName: string; amountOwed: number; amountPaid: number; balance: number; lastDueDate: string | null; status: string }>();
@@ -610,6 +617,67 @@ export default function ReportsPage() {
 
         <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
           <Card>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Receipt className="h-4 w-4 text-primary" />
+                Sales Report
+              </CardTitle>
+              <Select value={salesStockFilter} onValueChange={(value: 'all' | 'negative_only') => setSalesStockFilter(value)}>
+                <SelectTrigger className="w-[210px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sales</SelectItem>
+                  <SelectItem value="negative_only">Negative stock sales only</SelectItem>
+                </SelectContent>
+              </Select>
+            </CardHeader>
+            <CardContent>
+              {salesReportRows.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Customer</TableHead>
+                      <TableHead>Payment</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Paid Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {salesReportRows.slice(0, 16).map((sale) => (
+                      <TableRow key={sale.id}>
+                        <TableCell>{new Date(sale.sale_date).toLocaleDateString('en-GH')}</TableCell>
+                        <TableCell className="font-medium">{sale.customer_name || 'Walk-in'}</TableCell>
+                        <TableCell>{getPaymentMethodLabel(sale.payment_method)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline">{sale.payment_status || 'unpaid'}</Badge>
+                            {isNegativeStockSale(sale) ? (
+                              <Badge variant="destructive">Negative Stock Sale</Badge>
+                            ) : (
+                              <Badge variant="secondary">Normal Sale</Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">{formatCurrency(getPaidAmount(sale))}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <EmptyState
+                  icon={<Receipt className="h-7 w-7 text-muted-foreground" />}
+                  title={salesStockFilter === 'negative_only' ? 'No negative stock sales' : 'No sales in range'}
+                  description={salesStockFilter === 'negative_only'
+                    ? 'Sales made below available stock will show here.'
+                    : 'Sales recorded in the selected period will show here.'}
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <BarChart3 className="h-4 w-4 text-primary" />
@@ -708,18 +776,22 @@ export default function ReportsPage() {
                   </TableHeader>
                   <TableBody>
                     {raw.products.slice(0, 12).map((product) => {
-                      const quantity = Math.max(0, toNumber(product.quantity));
+                      const quantity = toNumber(product.quantity);
                       const threshold = Math.max(0, toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0));
                       return (
                         <TableRow key={product.id}>
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2">
                               <span>{product.name}</span>
-                              {quantity <= threshold ? <Badge variant="destructive">Low Stock</Badge> : null}
+                              {quantity < 0 ? (
+                                <Badge variant="destructive">Negative Stock</Badge>
+                              ) : quantity <= threshold ? (
+                                <Badge variant="destructive">Low Stock</Badge>
+                              ) : null}
                             </div>
                           </TableCell>
                           <TableCell>{product.category || 'Uncategorized'}</TableCell>
-                          <TableCell className="text-right">{quantity}</TableCell>
+                          <TableCell className={`text-right ${quantity < 0 ? 'font-semibold text-destructive' : ''}`}>{quantity}</TableCell>
                           <TableCell className="text-right">{formatCurrency(quantity * toNumber(product.cost_price))}</TableCell>
                           <TableCell className="text-right">{formatCurrency(quantity * toNumber(product.selling_price))}</TableCell>
                         </TableRow>
