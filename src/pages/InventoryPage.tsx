@@ -14,9 +14,9 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 import { supabase } from '@/integrations/supabase/client';
-import { formatCurrency, PAYMENT_METHODS, STOCK_MOVEMENT_TYPES, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
+import { formatCurrency, PAYMENT_METHODS, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { calculateAvailableBusinessMoney, calculateStockValue, toNumber } from '@/lib/sales-inventory';
-import { AlertTriangle, Boxes, PackagePlus, Plus } from 'lucide-react';
+import { AlertTriangle, Boxes, PackagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { insertStockMovementCompat, loadProductsCompat, loadStockMovementsCompat, logSupabaseError } from '@/lib/workspace';
 
@@ -45,18 +45,67 @@ type StockMovementRow = {
   movement_date: string;
 };
 
+type RestockRow = {
+  id: string;
+  product_id: string | null;
+  product_name: string;
+  category: string;
+  quantity_added: number;
+  cost_price_per_unit: number | string;
+  total_cost: number | string;
+  payment_method: string;
+  note: string | null;
+  reference: string | null;
+  recorded_by_name: string | null;
+  restock_date: string;
+  status: string;
+};
+
+type ExpenseRow = {
+  id: string;
+  amount: number | string;
+  category: string;
+  description: string | null;
+  expense_date: string;
+  payment_method: string | null;
+};
+
+function makeRestockExpenseMarker(restockId: string) {
+  return `[RESTOCK:${restockId}]`;
+}
+
+function buildRestockExpenseDescription({
+  restockId,
+  productName,
+  note,
+}: {
+  restockId: string;
+  productName: string;
+  note?: string | null;
+}) {
+  return `${makeRestockExpenseMarker(restockId)} Inventory Purchase (Restock) for ${productName}${note ? ` - ${note}` : ''}`;
+}
+
+function extractRestockExpenseId(description: string | null | undefined) {
+  const match = String(description ?? '').match(/\[RESTOCK:([a-f0-9-]+)\]/i);
+  return match?.[1] ?? null;
+}
+
 export default function InventoryPage() {
   const { user, displayName, isAdmin, isManager, isDistributor } = useAuth();
   const { businessId } = useBusiness();
   const { toast } = useToast();
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [movements, setMovements] = useState<StockMovementRow[]>([]);
+  const [restocks, setRestocks] = useState<RestockRow[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
   const [availableMoney, setAvailableMoney] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [editingRestock, setEditingRestock] = useState<RestockRow | null>(null);
+  const [deletingRestockId, setDeletingRestockId] = useState<string | null>(null);
   const [form, setForm] = useState({
     product_id: '',
-    movement_type: 'restock',
     movement_date: new Date().toISOString().slice(0, 10),
     quantity: '1',
     unit_cost: '0',
@@ -64,17 +113,17 @@ export default function InventoryPage() {
     payment_method: PAYMENT_METHODS[0].value,
     description: '',
     record_restocks_expense: false,
-    manual_direction: 'increase',
   });
 
   const canManage = isAdmin || isManager;
 
   const load = useCallback(async () => {
-    const [productsRes, movementsRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.allSettled([
+    const [productsRes, movementsRes, restocksRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.allSettled([
       loadProductsCompat(false, businessId),
       loadStockMovementsCompat(100, businessId),
+      supabase.from('restocks').select('*').order('restock_date', { ascending: false }),
       supabase.from('sales').select('total,amount_paid,payment_status,status'),
-      supabase.from('expenses').select('amount'),
+      supabase.from('expenses').select('*'),
       supabase.from('savings').select('amount'),
       supabase.from('investments').select('amount'),
       supabase.from('other_income' as any).select('amount'),
@@ -94,6 +143,20 @@ export default function InventoryPage() {
       setMovements([]);
     }
 
+    if (restocksRes.status === 'fulfilled') {
+      setRestocks(((restocksRes.value.data || []) as RestockRow[]) ?? []);
+    } else {
+      logSupabaseError('inventory.load.restocks', restocksRes.reason);
+      setRestocks([]);
+    }
+
+    if (expensesRes.status === 'fulfilled') {
+      setExpenses(((expensesRes.value.data || []) as ExpenseRow[]) ?? []);
+    } else {
+      logSupabaseError('inventory.load.expenses', expensesRes.reason);
+      setExpenses([]);
+    }
+
     const money = calculateAvailableBusinessMoney({
       sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as any[]) : [],
       otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as any[]) : [],
@@ -103,7 +166,6 @@ export default function InventoryPage() {
     });
 
     if (salesRes.status === 'rejected') logSupabaseError('inventory.load.sales', salesRes.reason);
-    if (expensesRes.status === 'rejected') logSupabaseError('inventory.load.expenses', expensesRes.reason);
     if (savingsRes.status === 'rejected') logSupabaseError('inventory.load.savings', savingsRes.reason);
     if (investmentsRes.status === 'rejected') logSupabaseError('inventory.load.investments', investmentsRes.reason);
     if (otherIncomeRes.status === 'rejected') logSupabaseError('inventory.load.otherIncome', otherIncomeRes.reason);
@@ -119,6 +181,7 @@ export default function InventoryPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_movements' }, () => { void load(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, () => { void load(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => { void load(); })
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -157,9 +220,184 @@ export default function InventoryPage() {
           ? current.selling_price
           : String(Number(selectedProduct.selling_price || 0)),
     }));
-  }, [selectedProduct?.id]);
+  }, [selectedProduct]);
 
-  const saveMovement = async (event: React.FormEvent) => {
+  const restockExpenseByRestockId = useMemo(() => {
+    const next = new Map<string, ExpenseRow>();
+    for (const expense of expenses) {
+      const restockId = extractRestockExpenseId(expense.description);
+      if (restockId) {
+        next.set(restockId, expense);
+      }
+    }
+    return next;
+  }, [expenses]);
+
+  const resetForm = () => {
+    setForm({
+      product_id: '',
+      movement_date: new Date().toISOString().slice(0, 10),
+      quantity: '1',
+      unit_cost: '0',
+      selling_price: '0',
+      payment_method: PAYMENT_METHODS[0].value,
+      description: '',
+      record_restocks_expense: false,
+    });
+    setEditingRestock(null);
+  };
+
+  const openCreateRestock = () => {
+    resetForm();
+    setDialogOpen(true);
+  };
+
+  const openEditRestock = (restock: RestockRow) => {
+    const product = products.find((row) => row.id === restock.product_id);
+    setEditingRestock(restock);
+    setForm({
+      product_id: restock.product_id || '',
+      movement_date: new Date(restock.restock_date).toISOString().slice(0, 10),
+      quantity: String(restock.quantity_added),
+      unit_cost: String(Number(restock.cost_price_per_unit || 0)),
+      selling_price: String(Number(product?.selling_price || 0)),
+      payment_method: restock.payment_method || PAYMENT_METHODS[0].value,
+      description: restock.note || restock.reference || '',
+      record_restocks_expense: restockExpenseByRestockId.has(restock.id),
+    });
+    setDialogOpen(true);
+  };
+
+  const syncRestockExpense = async ({
+    restockId,
+    productName,
+    totalCost,
+    paymentMethod,
+    note,
+    expenseDate,
+    enabled,
+  }: {
+    restockId: string;
+    productName: string;
+    totalCost: number;
+    paymentMethod: string;
+    note: string;
+    expenseDate: string;
+    enabled: boolean;
+  }) => {
+    const existingExpense = restockExpenseByRestockId.get(restockId) || null;
+    if (!enabled) {
+      if (existingExpense) {
+        const { error } = await supabase.from('expenses').delete().eq('id', existingExpense.id);
+        if (error) throw error;
+      }
+      return;
+    }
+
+    const payload = {
+      business_id: businessId,
+      category: 'Restock',
+      description: buildRestockExpenseDescription({ restockId, productName, note }),
+      amount: totalCost,
+      payment_method: paymentMethod,
+      expense_date: expenseDate,
+      recorded_by: user?.id,
+      recorded_by_name: displayName || user?.email || '',
+    };
+
+    if (existingExpense) {
+      const { error } = await supabase.from('expenses').update(payload as never).eq('id', existingExpense.id);
+      if (error) throw error;
+      return;
+    }
+
+    const { error } = await supabase.from('expenses').insert(payload as never);
+    if (error) throw error;
+  };
+
+  const upsertRestockMovement = async ({
+    restockId,
+    productId,
+    quantityAdded,
+    quantityAfter,
+    unitCost,
+    sellingPrice,
+    note,
+    movementDate,
+  }: {
+    restockId: string;
+    productId: string;
+    quantityAdded: number;
+    quantityAfter: number;
+    unitCost: number;
+    sellingPrice: number;
+    note: string;
+    movementDate: string;
+  }) => {
+    try {
+      const { data: existingRows, error: selectError } = await supabase
+        .from('stock_movements' as any)
+        .select('id')
+        .eq('source_table', 'restocks')
+        .eq('source_id', restockId)
+        .limit(1);
+      if (selectError) throw selectError;
+
+      const payload = {
+        business_id: businessId,
+        product_id: productId,
+        movement_type: 'restock',
+        quantity_change: quantityAdded,
+        quantity_after: quantityAfter,
+        unit_cost: unitCost,
+        unit_price: sellingPrice,
+        note,
+        created_by: user?.id,
+        created_by_name: displayName || user?.email || '',
+        movement_date: movementDate,
+        source_table: 'restocks',
+        source_id: restockId,
+      };
+
+      const existingMovement = (existingRows || [])[0] as { id: string } | undefined;
+      if (existingMovement?.id) {
+        const { error: updateError } = await supabase
+          .from('stock_movements' as any)
+          .update(payload)
+          .eq('id', existingMovement.id);
+        if (updateError) throw updateError;
+        return;
+      }
+
+      const movementResult = await insertStockMovementCompat(payload);
+      if (movementResult.skipped) {
+        logSupabaseError('inventory.upsertRestockMovement.skipped', new Error('stock_movements table unavailable'), {
+          restockId,
+          productId,
+        });
+      }
+    } catch (error) {
+      logSupabaseError('inventory.upsertRestockMovement', error, {
+        restockId,
+        productId,
+      });
+    }
+  };
+
+  const deleteRestockMovement = async (restockId: string) => {
+    try {
+      const { error } = await supabase
+        .from('stock_movements' as any)
+        .delete()
+        .eq('source_table', 'restocks')
+        .eq('source_id', restockId);
+      if (error) throw error;
+    } catch (error) {
+      logSupabaseError('inventory.deleteRestockMovement', error, { restockId });
+    }
+  };
+
+  const saveRestock = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!user || !businessId || !selectedProduct || !canManage) return;
 
@@ -171,53 +409,35 @@ export default function InventoryPage() {
       return;
     }
 
-    let quantityChange = quantity;
-    if (form.movement_type === 'sale' || form.movement_type === 'damaged_stock') {
-      quantityChange = -quantity;
-    }
-    if (form.movement_type === 'manual_adjustment' && form.manual_direction === 'decrease') {
-      quantityChange = -quantity;
-    }
-
-    const nextQuantity = selectedProduct.quantity + quantityChange;
-    if (nextQuantity < 0) {
-      toast({ title: 'Not enough stock', description: 'This adjustment would move stock below zero.', variant: 'destructive' });
-      return;
-    }
-
     setSaving(true);
     try {
-      const nextProductPatch: Record<string, unknown> = { quantity: nextQuantity };
-      if (form.movement_type === 'restock') {
-        nextProductPatch.cost_price = unitCost;
-        nextProductPatch.selling_price = sellingPrice;
-      }
-      const { error: productError } = await supabase.from('products').update(nextProductPatch as never).eq('id', selectedProduct.id);
-      if (productError) throw productError;
+      const totalCost = unitCost * quantity;
+      const movementDate = new Date(`${form.movement_date}T00:00:00`).toISOString();
+      const previousQuantity = Number(selectedProduct.quantity ?? 0);
+      const oldQuantity = editingRestock ? Number(editingRestock.quantity_added ?? 0) : 0;
+      const nextQuantity = editingRestock ? previousQuantity - oldQuantity + quantity : previousQuantity + quantity;
 
-      const movementResult = await insertStockMovementCompat({
-        business_id: businessId,
-        product_id: selectedProduct.id,
-        movement_type: form.movement_type,
-        quantity_change: quantityChange,
-        quantity_after: nextQuantity,
-        unit_cost: unitCost,
-        unit_price: form.movement_type === 'restock' ? sellingPrice : selectedProduct.selling_price,
-        note: form.description,
-        created_by: user.id,
-        created_by_name: displayName || user.email || '',
-        movement_date: new Date(`${form.movement_date}T00:00:00`).toISOString(),
-      });
-      if (movementResult.skipped) {
-        logSupabaseError('inventory.saveMovementSkipped', new Error('stock_movements table unavailable'), {
-          productId: selectedProduct.id,
-          movementType: form.movement_type,
-        });
-      }
-
-      if (form.movement_type === 'restock') {
-        const totalCost = unitCost * quantity;
-        const { error: restockError } = await supabase.from('restocks').insert({
+      const { data: restockData, error: restockError } = editingRestock
+        ? await supabase
+            .from('restocks')
+            .update({
+              product_name: selectedProduct.name,
+              category: selectedProduct.category || '',
+              quantity_added: quantity,
+              cost_price_per_unit: unitCost,
+              total_cost: totalCost,
+              restock_date: movementDate,
+              payment_method: form.payment_method,
+              note: form.description,
+              reference: form.description || null,
+              recorded_by_name: displayName || user.email || '',
+            } as never)
+            .eq('id', editingRestock.id)
+            .select('*')
+            .single()
+        : await supabase
+            .from('restocks')
+            .insert({
           business_id: businessId,
           product_id: selectedProduct.id,
           product_name: selectedProduct.name,
@@ -227,63 +447,107 @@ export default function InventoryPage() {
           quantity_added: quantity,
           cost_price_per_unit: unitCost,
           total_cost: totalCost,
-          restock_date: new Date(`${form.movement_date}T00:00:00`).toISOString(),
+          restock_date: movementDate,
           recorded_by: user.id,
           recorded_by_name: displayName || user.email || '',
           payment_method: form.payment_method,
           note: form.description,
+          reference: form.description || null,
           status: 'active',
-        });
-        if (restockError) throw restockError;
+            } as never)
+            .select('*')
+            .single();
+      if (restockError) throw restockError;
+      const savedRestock = restockData as RestockRow;
 
-        if (form.record_restocks_expense) {
-          const { error: expenseError } = await supabase.from('expenses').insert({
-            business_id: businessId,
-            category: 'Restock',
-            description: `Restock for ${selectedProduct.name}${form.description ? ` - ${form.description}` : ''}`,
-            amount: totalCost,
-            payment_method: form.payment_method,
-            expense_date: new Date(`${form.movement_date}T00:00:00`).toISOString(),
-            recorded_by: user.id,
-            recorded_by_name: displayName || user.email || '',
-          });
-          if (expenseError) throw expenseError;
-        }
+      await syncRestockExpense({
+        restockId: savedRestock.id,
+        productName: selectedProduct.name,
+        totalCost,
+        paymentMethod: form.payment_method,
+        note: form.description,
+        expenseDate: movementDate,
+        enabled: form.record_restocks_expense,
+      });
 
-        if (totalCost > availableMoney) {
-          toast({
-            title: 'Restock saved with low-cash warning',
-            description: `Restock still went through even though it exceeds available business money by ${formatCurrency(totalCost - availableMoney)}.`,
-          });
-        } else {
-          toast({ title: 'Restock saved', description: 'Inventory has been increased.' });
-        }
-      } else {
-        toast({ title: 'Inventory updated', description: `${selectedProduct.name} has been updated successfully.` });
-      }
+      const { error: productError } = await supabase
+        .from('products')
+        .update({
+          quantity: nextQuantity,
+          cost_price: unitCost,
+          selling_price: sellingPrice,
+        } as never)
+        .eq('id', selectedProduct.id);
+      if (productError) throw productError;
+
+      await upsertRestockMovement({
+        restockId: savedRestock.id,
+        productId: selectedProduct.id,
+        quantityAdded: quantity,
+        quantityAfter: nextQuantity,
+        unitCost,
+        sellingPrice,
+        note: form.description,
+        movementDate,
+      });
 
       setDialogOpen(false);
-      setForm({
-        product_id: '',
-        movement_type: 'restock',
-        movement_date: new Date().toISOString().slice(0, 10),
-        quantity: '1',
-        unit_cost: '0',
-        selling_price: '0',
-        payment_method: PAYMENT_METHODS[0].value,
-        description: '',
-        record_restocks_expense: false,
-        manual_direction: 'increase',
+      resetForm();
+      toast({
+        title: editingRestock ? 'Restock updated' : 'Restock saved',
+        description: form.record_restocks_expense
+          ? 'Stock, restock history, and expense records are all updated.'
+          : 'Stock increased and restock history updated.',
       });
       void load();
     } catch (error) {
       toast({
-        title: 'Could not save inventory change',
+        title: editingRestock ? 'Could not update restock' : 'Could not save restock',
         description: error instanceof Error ? error.message : 'Please try again.',
         variant: 'destructive',
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteRestock = async (restock: RestockRow) => {
+    if (!businessId || !canManage) return;
+    const confirmed = window.confirm(`Delete restock for ${restock.product_name}? This will adjust stock immediately.`);
+    if (!confirmed) return;
+    setDeletingRestockId(restock.id);
+    try {
+      const product = products.find((row) => row.id === restock.product_id);
+      if (product && restock.product_id) {
+        const nextQuantity = Number(product.quantity ?? 0) - Number(restock.quantity_added ?? 0);
+        const { error: productError } = await supabase
+          .from('products')
+          .update({ quantity: nextQuantity } as never)
+          .eq('id', restock.product_id);
+        if (productError) throw productError;
+      }
+
+      const linkedExpense = restockExpenseByRestockId.get(restock.id);
+      if (linkedExpense) {
+        const { error: expenseError } = await supabase.from('expenses').delete().eq('id', linkedExpense.id);
+        if (expenseError) throw expenseError;
+      }
+
+      await deleteRestockMovement(restock.id);
+
+      const { error: restockError } = await supabase.from('restocks').delete().eq('id', restock.id);
+      if (restockError) throw restockError;
+
+      toast({ title: 'Restock deleted', description: 'Stock and linked expense values have been recalculated.' });
+      void load();
+    } catch (error) {
+      toast({
+        title: 'Could not delete restock',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingRestockId(null);
     }
   };
 
@@ -320,7 +584,7 @@ export default function InventoryPage() {
               <p className="mt-1 text-lg font-semibold">{formatCurrency(stockValue)}</p>
             </div>
             {canManage ? (
-              <Button onClick={() => setDialogOpen(true)}><Plus className="mr-2 h-4 w-4" /> Record Inventory Change</Button>
+              <Button onClick={openCreateRestock}><Plus className="mr-2 h-4 w-4" /> Add Restock</Button>
             ) : null}
           </div>
         </section>
@@ -337,14 +601,15 @@ export default function InventoryPage() {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Record Inventory Change</DialogTitle>
+              <DialogTitle>{editingRestock ? 'Edit Restock' : 'Add Restock'}</DialogTitle>
             </DialogHeader>
-            <form className="space-y-4" onSubmit={saveMovement}>
+            <form className="space-y-4" onSubmit={saveRestock}>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Product</Label>
                   <Select
                     value={form.product_id}
+                    disabled={!!editingRestock}
                     onValueChange={(value) => {
                       const product = products.find((item) => item.id === value);
                       setForm((current) => ({
@@ -370,92 +635,63 @@ export default function InventoryPage() {
                   <Input type="date" value={form.movement_date} onChange={(event) => setForm((current) => ({ ...current, movement_date: event.target.value }))} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Movement Type</Label>
-                  <Select value={form.movement_type} onValueChange={(value) => setForm((current) => ({ ...current, movement_type: value }))}>
+                  <Label>Quantity Added</Label>
+                  <Input type="number" min="1" step="1" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Cost Per Unit (Buying Price)</Label>
+                  <Input type="number" min="0" step="0.01" value={form.unit_cost} onChange={(event) => setForm((current) => ({ ...current, unit_cost: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Selling Price (Customer Price)</Label>
+                  <Input type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm((current) => ({ ...current, selling_price: event.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Total Cost (Buying Cost)</Label>
+                  <Input value={formatCurrency(totalRestockCost)} readOnly />
+                </div>
+                <div className="space-y-2">
+                  <Label>Stock Value (Cost)</Label>
+                  <Input value={formatCurrency(restockStockValueCost)} readOnly />
+                </div>
+                <div className="space-y-2">
+                  <Label>Payment Method</Label>
+                  <Select value={form.payment_method} onValueChange={(value) => setForm((current) => ({ ...current, payment_method: value }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {STOCK_MOVEMENT_TYPES.filter((type) => type.value !== 'opening_stock' && type.value !== 'sale').map((type) => (
-                        <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                      {PAYMENT_METHODS.map((method) => (
+                        <SelectItem key={method.value} value={method.value}>{method.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>{form.movement_type === 'restock' ? 'Quantity Added' : 'Quantity'}</Label>
-                  <Input type="number" min="1" step="1" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} />
-                </div>
-                {form.movement_type === 'manual_adjustment' ? (
-                  <div className="space-y-2">
-                    <Label>Adjustment Direction</Label>
-                    <Select value={form.manual_direction} onValueChange={(value) => setForm((current) => ({ ...current, manual_direction: value }))}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="increase">Increase stock</SelectItem>
-                        <SelectItem value="decrease">Decrease stock</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-                {form.movement_type === 'restock' ? (
-                  <>
-                    <div className="space-y-2">
-                      <Label>Cost Per Unit (Buying Price)</Label>
-                      <Input type="number" min="0" step="0.01" value={form.unit_cost} onChange={(event) => setForm((current) => ({ ...current, unit_cost: event.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Selling Price (Customer Price)</Label>
-                      <Input type="number" min="0" step="0.01" value={form.selling_price} onChange={(event) => setForm((current) => ({ ...current, selling_price: event.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Total Cost (Buying Cost)</Label>
-                      <Input value={formatCurrency(totalRestockCost)} readOnly />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Stock Value (Cost)</Label>
-                      <Input value={formatCurrency(restockStockValueCost)} readOnly />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Payment Method</Label>
-                      <Select value={form.payment_method} onValueChange={(value) => setForm((current) => ({ ...current, payment_method: value }))}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {PAYMENT_METHODS.map((method) => (
-                            <SelectItem key={method.value} value={method.value}>{method.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                ) : null}
                 <div className="space-y-2 md:col-span-2">
                   <Label>Note / Reference (optional)</Label>
                   <Textarea rows={3} value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} />
                 </div>
               </div>
 
-              {form.movement_type === 'restock' ? (
-                <label className="flex items-start gap-3 rounded-2xl border border-border/60 p-4">
-                  <input
-                    type="checkbox"
-                    checked={form.record_restocks_expense}
-                    onChange={(event) => setForm((current) => ({ ...current, record_restocks_expense: event.target.checked }))}
-                    className="mt-1"
-                  />
-                  <div>
-                    <p className="text-sm font-medium">Record this restock as expense</p>
-                    <p className="text-xs text-muted-foreground">If enabled, SikaFlow saves a matching expense entry. If business money is low, you&apos;ll get a warning only.</p>
-                  </div>
-                </label>
-              ) : null}
+              <label className="flex items-start gap-3 rounded-2xl border border-border/60 p-4">
+                <input
+                  type="checkbox"
+                  checked={form.record_restocks_expense}
+                  onChange={(event) => setForm((current) => ({ ...current, record_restocks_expense: event.target.checked }))}
+                  className="mt-1"
+                />
+                <div>
+                  <p className="text-sm font-medium">Record this restock as expense</p>
+                  <p className="text-xs text-muted-foreground">If enabled, Total Cost is deducted from available business money and logged as a matching expense. If cash is low, you&apos;ll get a warning only.</p>
+                </div>
+              </label>
 
               <Button type="submit" className="w-full" disabled={saving}>
-                {saving ? 'Saving...' : 'Save Inventory Change'}
+                {saving ? 'Saving...' : editingRestock ? 'Update Restock' : 'Save Restock'}
               </Button>
             </form>
           </DialogContent>
         </Dialog>
 
-        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="space-y-4">
           <Card className="border-border/70">
             <CardHeader>
               <CardTitle>Current Stock</CardTitle>
@@ -495,7 +731,7 @@ export default function InventoryPage() {
                 <EmptyState
                   icon={<Boxes className="h-7 w-7 text-muted-foreground" />}
                   title="No products in inventory yet"
-                  description="Add products first, then use Record Inventory Change to restock and make them appear in stock."
+                  description="Add products first, then use Add Restock to bring them into stock."
                 />
               )}
             </CardContent>
@@ -503,40 +739,75 @@ export default function InventoryPage() {
 
           <Card className="border-border/70">
             <CardHeader>
-              <CardTitle>Stock Movement History</CardTitle>
+              <CardTitle>Restock History</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {movements.length > 0 ? (
-                movements.map((movement) => (
-                  <div key={movement.id} className="rounded-2xl border border-border/60 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-semibold capitalize">{movement.movement_type.replaceAll('_', ' ')}</p>
-                          {movement.movement_type === 'sale' && movement.quantity_after < 0 ? (
-                            <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
-                              Negative Stock Sale
-                            </span>
-                          ) : null}
-                        </div>
-                        <p className="text-xs text-muted-foreground">{movement.note || movement.created_by_name || 'Inventory update'}</p>
-                      </div>
-                      <p className={`text-sm font-semibold ${movement.quantity_change >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                        {movement.quantity_change > 0 ? '+' : ''}
-                        {movement.quantity_change}
-                      </p>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{new Date(movement.movement_date).toLocaleString('en-GH')}</span>
-                      <span>Stock after: {movement.quantity_after}</span>
-                    </div>
-                  </div>
-                ))
+            <CardContent className="p-0">
+              {restocks.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Product</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Quantity Added</TableHead>
+                        <TableHead>Cost Per Unit</TableHead>
+                        <TableHead>Total Cost</TableHead>
+                        <TableHead>Payment Method</TableHead>
+                        <TableHead>Expense Status</TableHead>
+                        <TableHead>Note / Reference</TableHead>
+                        <TableHead>Created By</TableHead>
+                        {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {restocks.map((restock) => {
+                        const linkedExpense = restockExpenseByRestockId.get(restock.id);
+                        return (
+                          <TableRow key={restock.id}>
+                            <TableCell>{new Date(restock.restock_date).toLocaleDateString('en-GH')}</TableCell>
+                            <TableCell className="font-medium">{restock.product_name}</TableCell>
+                            <TableCell>{restock.category || '—'}</TableCell>
+                            <TableCell>{restock.quantity_added}</TableCell>
+                            <TableCell>{formatCurrency(Number(restock.cost_price_per_unit || 0))}</TableCell>
+                            <TableCell>{formatCurrency(Number(restock.total_cost || 0))}</TableCell>
+                            <TableCell>{PAYMENT_METHODS.find((method) => method.value === restock.payment_method)?.label ?? restock.payment_method}</TableCell>
+                            <TableCell>
+                              <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${linkedExpense ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
+                                {linkedExpense ? 'Recorded as Expense' : 'Stock Only'}
+                              </span>
+                            </TableCell>
+                            <TableCell className="max-w-[220px] truncate">{restock.note || restock.reference || '—'}</TableCell>
+                            <TableCell>{restock.recorded_by_name || '—'}</TableCell>
+                            {canManage ? (
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button variant="ghost" size="icon" onClick={() => openEditRestock(restock)}>
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="text-destructive"
+                                    disabled={deletingRestockId === restock.id}
+                                    onClick={() => void deleteRestock(restock)}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            ) : null}
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
               ) : (
                 <EmptyState
                   icon={<PackagePlus className="h-7 w-7 text-muted-foreground" />}
-                  title="No stock movements yet"
-                  description="Opening stock, restocks, returns, and adjustments will appear here."
+                  title="No restocks yet"
+                  description="Restocks will appear here with cost, payment, expense status, and edit/delete actions."
                 />
               )}
             </CardContent>
