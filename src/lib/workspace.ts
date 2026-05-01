@@ -35,6 +35,9 @@ type CachedProductRow = {
   is_archived?: boolean | null;
 };
 
+const STABLE_PRODUCT_SELECT =
+  'id,name,sku,category,quantity,cost_price,selling_price,reorder_level,image_url,business_id,created_at,updated_at';
+
 function getProductCacheKey(businessId: string) {
   return `sikaflow_products_${businessId}`;
 }
@@ -94,6 +97,31 @@ function writeCachedProducts(businessId: string, rows: CachedProductRow[]) {
   } catch {
     // Ignore storage write errors. Cache is only a UX fallback.
   }
+}
+
+function normalizeProductRow(row: Record<string, unknown>): CachedProductRow {
+  return {
+    id: String(row.id ?? ''),
+    business_id: typeof row.business_id === 'string' ? row.business_id : undefined,
+    name: String(row.name ?? ''),
+    sku: typeof row.sku === 'string' ? row.sku : '',
+    category: typeof row.category === 'string' ? row.category : '',
+    quantity: typeof row.quantity === 'number' ? row.quantity : Number(row.quantity ?? 0),
+    cost_price: typeof row.cost_price === 'number' || typeof row.cost_price === 'string' ? row.cost_price : 0,
+    selling_price: typeof row.selling_price === 'number' || typeof row.selling_price === 'string' ? row.selling_price : 0,
+    reorder_level:
+      typeof row.reorder_level === 'number' || typeof row.reorder_level === 'string'
+        ? Number(row.reorder_level ?? 0)
+        : 0,
+    low_stock_threshold:
+      typeof row.low_stock_threshold === 'number' || typeof row.low_stock_threshold === 'string'
+        ? Number(row.low_stock_threshold ?? 0)
+        : typeof row.reorder_level === 'number' || typeof row.reorder_level === 'string'
+          ? Number(row.reorder_level ?? 0)
+          : 0,
+    image_url: typeof row.image_url === 'string' ? row.image_url : null,
+    is_archived: typeof row.is_archived === 'boolean' ? row.is_archived : false,
+  };
 }
 
 export function rememberCachedProduct(businessId: string, row: CachedProductRow) {
@@ -449,6 +477,13 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     return query;
   };
   const visibleBaseQuery = () => supabase.from('products').select('*').order('name');
+  const stableBaseQuery = () => {
+    let query = supabase.from('products').select(STABLE_PRODUCT_SELECT).order('name');
+    if (effectiveBusinessId) {
+      query = query.eq('business_id', effectiveBusinessId);
+    }
+    return query;
+  };
   const filterVisibleRows = (rows: CachedProductRow[]) =>
     effectiveBusinessId
       ? rows.filter((row) => row.business_id === effectiveBusinessId)
@@ -460,20 +495,40 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     if (businessScopedRows.length > 0) return businessScopedRows;
     return filterCachedRows(filterVisibleRows(allCachedRows));
   };
+  const loadStableRows = async () => {
+    const { data: stableData, error: stableError } = await stableBaseQuery();
+    if (stableError) throw stableError;
+    return ((stableData ?? []) as Array<Record<string, unknown>>).map(normalizeProductRow);
+  };
 
   if (showArchived) {
-    const { data, error } = await scopedBaseQuery();
-    if (error) throw error;
-    let liveRows = (data ?? []) as CachedProductRow[];
-    if (liveRows.length === 0 && effectiveBusinessId) {
-      const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
-      if (!visibleError) {
-        liveRows = filterVisibleRows((visibleRows ?? []) as CachedProductRow[]);
+    try {
+      const { data, error } = await scopedBaseQuery();
+      if (error) throw error;
+      let liveRows = (data ?? []) as CachedProductRow[];
+      if (liveRows.length === 0 && effectiveBusinessId) {
+        const stableRows = await loadStableRows();
+        liveRows = stableRows;
+      }
+      const mergedRows = mergeProductRows(liveRows, filterVisibleRows(allCachedRows), true);
+      if (effectiveBusinessId && mergedRows.length > 0) writeCachedProducts(effectiveBusinessId, mergedRows);
+      return mergedRows;
+    } catch (error) {
+      logSupabaseError('workspace.loadProductsCompat.showArchived', error, {
+        businessId: effectiveBusinessId,
+      });
+      try {
+        const stableRows = await loadStableRows();
+        const mergedRows = mergeProductRows(stableRows, filterVisibleRows(allCachedRows), true);
+        if (effectiveBusinessId && mergedRows.length > 0) writeCachedProducts(effectiveBusinessId, mergedRows);
+        return mergedRows;
+      } catch (stableError) {
+        logSupabaseError('workspace.loadProductsCompat.showArchived.fallback', stableError, {
+          businessId: effectiveBusinessId,
+        });
+        return getCachedRowsFallback();
       }
     }
-    const mergedRows = mergeProductRows(liveRows, filterVisibleRows(allCachedRows), true);
-    if (effectiveBusinessId && mergedRows.length > 0) writeCachedProducts(effectiveBusinessId, mergedRows);
-    return mergedRows;
   }
 
   const { data, error } = await scopedBaseQuery().eq('is_archived', false);
@@ -496,6 +551,21 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     if (mergedRows.length > 0) {
       if (businessId) writeCachedProducts(businessId, mergedRows);
       return mergedRows;
+    }
+
+    if (effectiveBusinessId) {
+      try {
+        const stableRows = await loadStableRows();
+        const mergedStableRows = mergeProductRows(stableRows, filterVisibleRows(allCachedRows), false);
+        if (mergedStableRows.length > 0) {
+          writeCachedProducts(effectiveBusinessId, mergedStableRows);
+          return mergedStableRows;
+        }
+      } catch (stableError) {
+        logSupabaseError('workspace.loadProductsCompat.stableAfterEmpty', stableError, {
+          businessId: effectiveBusinessId,
+        });
+      }
     }
 
     if (effectiveBusinessId) {
@@ -530,26 +600,20 @@ export async function loadProductsCompat(showArchived: boolean, businessId?: str
     missingColumn: 'is_archived',
     fallbackMode: 'loadWithoutArchiveColumn',
   });
-  const { data: fallbackData, error: fallbackError } = await scopedBaseQuery();
-  if (fallbackError) {
-    logSupabaseError('workspace.loadProductsCompat.fallback', fallbackError, {
+  try {
+    const stableRows = await loadStableRows();
+    const mergedRows = mergeProductRows(stableRows, filterVisibleRows(allCachedRows), false);
+    if (mergedRows.length > 0 && effectiveBusinessId) writeCachedProducts(effectiveBusinessId, mergedRows);
+    return mergedRows.length > 0 ? mergedRows : getCachedRowsFallback();
+  } catch (stableError) {
+    logSupabaseError('workspace.loadProductsCompat.fallback', stableError, {
       table: 'products',
-      fallbackMode: 'loadFromCacheAfterFallbackFailure',
+      fallbackMode: 'loadFromCacheAfterStableFallbackFailure',
       businessId: effectiveBusinessId,
       showArchived,
     });
     return getCachedRowsFallback();
   }
-  let liveRows = (fallbackData ?? []) as CachedProductRow[];
-  if (liveRows.length === 0 && effectiveBusinessId) {
-    const { data: visibleRows, error: visibleError } = await visibleBaseQuery();
-    if (!visibleError) {
-      liveRows = filterVisibleRows((visibleRows ?? []) as CachedProductRow[]);
-    }
-  }
-  const mergedRows = mergeProductRows(liveRows, filterVisibleRows(allCachedRows), false);
-  if (mergedRows.length > 0 && effectiveBusinessId) writeCachedProducts(effectiveBusinessId, mergedRows);
-  return mergedRows.length > 0 ? mergedRows : getCachedRowsFallback();
 }
 
 export async function loadStockMovementsCompat(limit = 100, businessId?: string | null) {
