@@ -200,12 +200,17 @@ export default function InventoryPage() {
 
   const selectedProduct = products.find((product) => product.id === form.product_id) || null;
   const stockValue = useMemo(() => calculateStockValue(products, 'cost'), [products]);
-  const stockProducts = useMemo(
-    () => products.filter((product) => toNumber(product.quantity) !== 0),
+  const inventoryProducts = useMemo(
+    () => [...products].sort((left, right) => left.name.localeCompare(right.name)),
     [products],
   );
   const lowStockProducts = useMemo(
-    () => products.filter((product) => toNumber(product.quantity) <= toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0)),
+    () =>
+      products.filter((product) => {
+        const quantity = toNumber(product.quantity);
+        const threshold = toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0);
+        return quantity > 0 && quantity <= threshold;
+      }),
     [products],
   );
   const totalRestockCost = useMemo(
@@ -242,6 +247,37 @@ export default function InventoryPage() {
     }
     return next;
   }, [expenses]);
+
+  const getStockStatus = useCallback((product: ProductRow) => {
+    const quantity = toNumber(product.quantity);
+    const threshold = toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0);
+
+    if (quantity < 0) {
+      return {
+        label: 'Negative Stock',
+        className: 'border border-amber-500/30 bg-amber-500/10 text-amber-300',
+      };
+    }
+
+    if (quantity === 0) {
+      return {
+        label: 'Out of Stock',
+        className: 'border border-rose-500/30 bg-rose-500/10 text-rose-300',
+      };
+    }
+
+    if (threshold > 0 && quantity <= threshold) {
+      return {
+        label: 'Low Stock',
+        className: 'border border-yellow-500/30 bg-yellow-500/10 text-yellow-300',
+      };
+    }
+
+    return {
+      label: 'In Stock',
+      className: 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+    };
+  }, []);
 
   const resetForm = () => {
     setForm({
@@ -694,7 +730,7 @@ export default function InventoryPage() {
               <CardTitle>Current Stock</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
-              {stockProducts.length > 0 ? (
+              {inventoryProducts.length > 0 ? (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -702,25 +738,34 @@ export default function InventoryPage() {
                         <TableHead>Product</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Quantity</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead>Low Stock</TableHead>
                         <TableHead>Stock Value (Cost)</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {stockProducts.map((product) => (
-                        <TableRow key={product.id}>
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
-                              <span>{product.name}</span>
-                              {toNumber(product.quantity) < 0 ? <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">Negative Stock</span> : null}
-                            </div>
-                          </TableCell>
-                          <TableCell>{product.category || '—'}</TableCell>
-                          <TableCell className={toNumber(product.quantity) < 0 ? 'font-semibold text-amber-300' : undefined}>{product.quantity}</TableCell>
-                          <TableCell>{product.low_stock_threshold ?? product.reorder_level ?? 0}</TableCell>
-                          <TableCell>{formatCurrency(toNumber(product.quantity) * Number(product.cost_price || 0))}</TableCell>
-                        </TableRow>
-                      ))}
+                      {inventoryProducts.map((product) => {
+                        const quantity = toNumber(product.quantity);
+                        const stockStatus = getStockStatus(product);
+                        return (
+                          <TableRow key={product.id}>
+                            <TableCell className="font-medium">
+                              {product.name}
+                            </TableCell>
+                            <TableCell>{product.category || '—'}</TableCell>
+                            <TableCell className={quantity < 0 ? 'font-semibold text-amber-300' : quantity === 0 ? 'font-medium text-rose-300' : undefined}>
+                              {quantity}
+                            </TableCell>
+                            <TableCell>
+                              <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${stockStatus.className}`}>
+                                {stockStatus.label}
+                              </span>
+                            </TableCell>
+                            <TableCell>{product.low_stock_threshold ?? product.reorder_level ?? 0}</TableCell>
+                            <TableCell>{formatCurrency(quantity * Number(product.cost_price || 0))}</TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
