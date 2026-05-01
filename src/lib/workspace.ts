@@ -466,6 +466,56 @@ export async function updateProductRecord(
   });
 }
 
+export async function insertRestockRecord(
+  payload: Record<string, unknown>,
+) {
+  return insertWithOptionalColumnFallback({
+    table: 'restocks',
+    payload,
+    optionalColumns: ['status', 'business_id'],
+    context: 'workspace.insertRestock',
+  });
+}
+
+export async function updateRestockRecord(
+  restockId: string,
+  payload: Record<string, unknown>,
+) {
+  return updateWithOptionalColumnFallback({
+    table: 'restocks',
+    matchColumn: 'id',
+    matchValue: restockId,
+    payload,
+    optionalColumns: ['status', 'business_id'],
+    context: 'workspace.updateRestock',
+  });
+}
+
+export async function insertExpenseRecord(
+  payload: Record<string, unknown>,
+) {
+  return insertWithOptionalColumnFallback({
+    table: 'expenses',
+    payload,
+    optionalColumns: ['business_id', 'payment_method', 'attachment_path'],
+    context: 'workspace.insertExpense',
+  });
+}
+
+export async function updateExpenseRecord(
+  expenseId: string,
+  payload: Record<string, unknown>,
+) {
+  return updateWithOptionalColumnFallback({
+    table: 'expenses',
+    matchColumn: 'id',
+    matchValue: expenseId,
+    payload,
+    optionalColumns: ['business_id', 'payment_method', 'attachment_path'],
+    context: 'workspace.updateExpense',
+  });
+}
+
 export async function loadProductsCompat(showArchived: boolean, businessId?: string | null) {
   const effectiveBusinessId = businessId ?? await resolveActiveBusinessIdFromSession();
   const allCachedRows = readAllCachedProducts();

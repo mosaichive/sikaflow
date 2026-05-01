@@ -18,7 +18,17 @@ import { formatCurrency, PAYMENT_METHODS, SIKAFLOW_TOOLTIPS } from '@/lib/consta
 import { calculateAvailableBusinessMoney, calculateStockValue, toNumber } from '@/lib/sales-inventory';
 import { AlertTriangle, Boxes, PackagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { insertStockMovementCompat, loadProductsCompat, loadStockMovementsCompat, logSupabaseError } from '@/lib/workspace';
+import {
+  getErrorMessage,
+  insertExpenseRecord,
+  insertRestockRecord,
+  insertStockMovementCompat,
+  loadProductsCompat,
+  loadStockMovementsCompat,
+  logSupabaseError,
+  updateExpenseRecord,
+  updateRestockRecord,
+} from '@/lib/workspace';
 
 type ProductRow = {
   id: string;
@@ -306,13 +316,11 @@ export default function InventoryPage() {
     };
 
     if (existingExpense) {
-      const { error } = await supabase.from('expenses').update(payload as never).eq('id', existingExpense.id);
-      if (error) throw error;
+      await updateExpenseRecord(existingExpense.id, payload);
       return;
     }
 
-    const { error } = await supabase.from('expenses').insert(payload as never);
-    if (error) throw error;
+    await insertExpenseRecord(payload);
   };
 
   const upsertRestockMovement = async ({
@@ -417,48 +425,32 @@ export default function InventoryPage() {
       const oldQuantity = editingRestock ? Number(editingRestock.quantity_added ?? 0) : 0;
       const nextQuantity = editingRestock ? previousQuantity - oldQuantity + quantity : previousQuantity + quantity;
 
-      const { data: restockData, error: restockError } = editingRestock
-        ? await supabase
-            .from('restocks')
-            .update({
-              product_name: selectedProduct.name,
-              category: selectedProduct.category || '',
-              quantity_added: quantity,
-              cost_price_per_unit: unitCost,
-              total_cost: totalCost,
-              restock_date: movementDate,
-              payment_method: form.payment_method,
-              note: form.description,
-              reference: form.description || null,
-              recorded_by_name: displayName || user.email || '',
-            } as never)
-            .eq('id', editingRestock.id)
-            .select('*')
-            .single()
-        : await supabase
-            .from('restocks')
-            .insert({
-          business_id: businessId,
-          product_id: selectedProduct.id,
-          product_name: selectedProduct.name,
-          sku: '',
-          category: selectedProduct.category || '',
-          supplier: selectedProduct.supplier || '',
-          quantity_added: quantity,
-          cost_price_per_unit: unitCost,
-          total_cost: totalCost,
-          restock_date: movementDate,
-          recorded_by: user.id,
-          recorded_by_name: displayName || user.email || '',
-          payment_method: form.payment_method,
-          note: form.description,
-          reference: form.description || null,
-          status: 'active',
-            } as never)
-            .select('*')
-            .single();
-      if (restockError) throw restockError;
-      const savedRestock = restockData as RestockRow;
+      const restockPayload = {
+        business_id: businessId,
+        product_id: selectedProduct.id,
+        product_name: selectedProduct.name,
+        sku: '',
+        category: selectedProduct.category || '',
+        supplier: selectedProduct.supplier || '',
+        quantity_added: quantity,
+        cost_price_per_unit: unitCost,
+        total_cost: totalCost,
+        restock_date: movementDate,
+        recorded_by: user.id,
+        recorded_by_name: displayName || user.email || '',
+        payment_method: form.payment_method,
+        note: form.description,
+        reference: form.description || null,
+        status: 'active',
+      };
+
+      const savedRestock = editingRestock
+        ? (await updateRestockRecord(editingRestock.id, restockPayload), {
+            ...editingRestock,
+            ...restockPayload,
+            id: editingRestock.id,
+          } as RestockRow)
+        : ((await insertRestockRecord(restockPayload)) as unknown as RestockRow);
 
       await syncRestockExpense({
         restockId: savedRestock.id,
@@ -501,9 +493,14 @@ export default function InventoryPage() {
       });
       void load();
     } catch (error) {
+      logSupabaseError('inventory.saveRestock', error, {
+        businessId,
+        productId: selectedProduct.id,
+        editingRestockId: editingRestock?.id ?? null,
+      });
       toast({
         title: editingRestock ? 'Could not update restock' : 'Could not save restock',
-        description: error instanceof Error ? error.message : 'Please try again.',
+        description: getErrorMessage(error, 'Please try again.'),
         variant: 'destructive',
       });
     } finally {
