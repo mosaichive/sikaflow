@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/constants';
-import { calculateFinancialSnapshot } from '@/lib/business-money';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateBusinessWideAvailableMoney, calculateFinancialSnapshot } from '@/lib/business-money';
 import { useBusiness } from '@/context/BusinessContext';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -247,7 +247,19 @@ export default function SavingsPage() {
     [expenses, investments, investorFunds, otherIncome, sales, savings],
   );
 
-  const availableBusinessMoney = money.availableBusinessMoney;
+  const availableBusinessMoney = useMemo(
+    () =>
+      calculateBusinessWideAvailableMoney({
+        sales,
+        otherIncome,
+        expenses,
+        savings,
+        investments,
+        investorFunds,
+      }),
+    [expenses, investments, investorFunds, otherIncome, sales, savings],
+  );
+
   const totalSavings = savings.reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const filteredDestinations = useMemo(
     () => destinations.filter((destination) => normalizeDestinationType(destination.account_type) === savingForm.savings_type),
@@ -428,7 +440,7 @@ export default function SavingsPage() {
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Available Business Money</p>
               <p className="mt-1 text-2xl font-bold text-primary">{formatCurrency(availableBusinessMoney)}</p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Savings moves money out of working cash and into Bank, MoMo, or Susu.
+                {AVAILABLE_BUSINESS_MONEY_FORMULA}
               </p>
             </div>
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">

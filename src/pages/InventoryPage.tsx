@@ -15,7 +15,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency, PAYMENT_METHODS, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
-import { calculateFinancialSnapshot, calculateStockValue, toNumber } from '@/lib/sales-inventory';
+import { calculateStockValue, toNumber } from '@/lib/sales-inventory';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateBusinessWideAvailableMoney } from '@/lib/business-money';
 import { AlertTriangle, Boxes, PackagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -168,7 +169,7 @@ export default function InventoryPage() {
       setExpenses([]);
     }
 
-    const money = calculateFinancialSnapshot({
+    const money = calculateBusinessWideAvailableMoney({
       sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as any[]) : [],
       otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as any[]) : [],
       expenses: expensesRes.status === 'fulfilled' ? ((expensesRes.value.data || []) as any[]) : [],
@@ -185,7 +186,7 @@ export default function InventoryPage() {
     if (otherIncomeRes.status === 'rejected') logSupabaseError('inventory.load.otherIncome', otherIncomeRes.reason);
     if (investorFundsRes.status === 'rejected') logSupabaseError('inventory.load.investorFunds', investorFundsRes.reason);
 
-    setAvailableMoney(money.availableBusinessMoney);
+    setAvailableMoney(money);
   }, [businessId]);
 
   useEffect(() => {
@@ -620,6 +621,7 @@ export default function InventoryPage() {
             <div className="rounded-2xl border border-border bg-background px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Available Business Money</p>
               <p className="mt-1 text-lg font-semibold">{formatCurrency(availableMoney)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{AVAILABLE_BUSINESS_MONEY_FORMULA}</p>
             </div>
             <div className="rounded-2xl border border-border bg-background px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Stock Value (Cost)</p>
