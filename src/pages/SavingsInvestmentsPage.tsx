@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
 import { formatCurrency } from '@/lib/constants';
-import { calculateAvailableBusinessMoney } from '@/lib/business-money';
+import { calculateFinancialSnapshot } from '@/lib/business-money';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
@@ -105,7 +105,7 @@ export default function SavingsInvestmentsPage() {
       supabase.from('investments').select('*').order('investment_date', { ascending: false }),
       supabase.from('investor_funding').select('*').order('date_received', { ascending: false }),
       supabase.from('sales').select('total, amount_paid, payment_status'),
-      supabase.from('expenses').select('amount'),
+      supabase.from('expenses').select('amount,category,description'),
       supabase.from('other_income' as any).select('amount'),
     ]);
     const banksData = (b.data || []) as any;
@@ -120,12 +120,13 @@ export default function SavingsInvestmentsPage() {
     setInvestments(investData);
     setFundings(fundingData);
 
-    const moneySummary = calculateAvailableBusinessMoney({
+    const moneySummary = calculateFinancialSnapshot({
       sales: salesData as any[],
       otherIncome: (otherIncomeRes.data || []) as any[],
       expenses: expData as any[],
       savings: savingsData as any[],
       investments: investData as any[],
+      investorFunds: fundingData as any[],
     });
     setAvailableCash(moneySummary.availableBusinessMoney);
   };

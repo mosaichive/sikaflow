@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCurrency, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
-import { calculateDashboardTotals, getPaidAmount, getIsoDate, normalizeText, sumTodaySales, toNumber } from '@/lib/sales-inventory';
+import { calculateDashboardTotals, getPaidAmount, getIsoDate, sumTodaySales, toNumber } from '@/lib/sales-inventory';
 import { cn } from '@/lib/utils';
 import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
 
@@ -74,6 +74,7 @@ type SavingsRow = {
   reference?: string | null;
 };
 type InvestmentRow = { amount: number | string; investment_date: string };
+type FundingRow = { amount: number | string; date_received: string; investor_name?: string | null; reference?: string | null };
 
 type DashboardData = {
   sales: SaleRow[];
@@ -83,6 +84,7 @@ type DashboardData = {
   otherIncome: OtherIncomeRow[];
   savings: SavingsRow[];
   investments: InvestmentRow[];
+  investorFunds: FundingRow[];
 };
 
 function startOfYear(year: number) {
@@ -171,6 +173,18 @@ function buildRecentActivity(data: DashboardData, from: string, to: string) {
         date: row.savings_date,
         icon: WalletCards,
         tone: 'text-amber-500',
+      })),
+    ...data.investorFunds
+      .filter((row) => inRange(row.date_received, from, to))
+      .map((row) => ({
+        id: `funding-${row.reference || row.date_received}`,
+        title: row.investor_name ? `Investor funds from ${row.investor_name}` : 'Investor funds',
+        subtitle: row.reference || new Date(row.date_received).toLocaleDateString('en-GH'),
+        amount: toNumber(row.amount),
+        direction: 'in' as const,
+        date: row.date_received,
+        icon: WalletCards,
+        tone: 'text-sky-400',
       })),
   ];
 
@@ -276,6 +290,7 @@ export default function Dashboard() {
     otherIncome: [],
     savings: [],
     investments: [],
+    investorFunds: [],
   });
   const [loading, setLoading] = useState(true);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
@@ -293,7 +308,7 @@ export default function Dashboard() {
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes] = await Promise.allSettled([
+      const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes, investorFundsRes] = await Promise.allSettled([
         supabase.from('sales').select('*').order('sale_date', { ascending: false }),
         supabase.from('sale_items').select('*'),
         loadProductsCompat(false, businessId),
@@ -301,6 +316,7 @@ export default function Dashboard() {
         supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
         supabase.from('savings').select('id,amount,savings_date,source,note,reference'),
         supabase.from('investments').select('amount,investment_date'),
+        supabase.from('investor_funding').select('amount,date_received,investor_name,reference').order('date_received', { ascending: false }),
       ]);
 
       if (salesRes.status === 'rejected') logSupabaseError('dashboard.load.sales', salesRes.reason);
@@ -310,6 +326,7 @@ export default function Dashboard() {
       if (otherIncomeRes.status === 'rejected') logSupabaseError('dashboard.load.otherIncome', otherIncomeRes.reason);
       if (savingsRes.status === 'rejected') logSupabaseError('dashboard.load.savings', savingsRes.reason);
       if (investmentsRes.status === 'rejected') logSupabaseError('dashboard.load.investments', investmentsRes.reason);
+      if (investorFundsRes.status === 'rejected') logSupabaseError('dashboard.load.investorFunds', investorFundsRes.reason);
 
       if (salesRes.status === 'fulfilled' && salesRes.value.error) logSupabaseError('dashboard.load.sales', salesRes.value.error);
       if (saleItemsRes.status === 'fulfilled' && saleItemsRes.value.error) logSupabaseError('dashboard.load.saleItems', saleItemsRes.value.error);
@@ -317,6 +334,7 @@ export default function Dashboard() {
       if (otherIncomeRes.status === 'fulfilled' && otherIncomeRes.value.error) logSupabaseError('dashboard.load.otherIncome', otherIncomeRes.value.error);
       if (savingsRes.status === 'fulfilled' && savingsRes.value.error) logSupabaseError('dashboard.load.savings', savingsRes.value.error);
       if (investmentsRes.status === 'fulfilled' && investmentsRes.value.error) logSupabaseError('dashboard.load.investments', investmentsRes.value.error);
+      if (investorFundsRes.status === 'fulfilled' && investorFundsRes.value.error) logSupabaseError('dashboard.load.investorFunds', investorFundsRes.value.error);
 
       setData({
         sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as SaleRow[]) : [],
@@ -326,6 +344,7 @@ export default function Dashboard() {
         otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as OtherIncomeRow[]) : [],
         savings: savingsRes.status === 'fulfilled' ? ((savingsRes.value.data || []) as SavingsRow[]) : [],
         investments: investmentsRes.status === 'fulfilled' ? ((investmentsRes.value.data || []) as InvestmentRow[]) : [],
+        investorFunds: investorFundsRes.status === 'fulfilled' ? ((investorFundsRes.value.data || []) as FundingRow[]) : [],
       });
     } finally {
       setLoading(false);
@@ -344,6 +363,7 @@ export default function Dashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'savings' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, refresh)
       .subscribe();
 
     return () => {
@@ -387,13 +407,14 @@ export default function Dashboard() {
       ...data.otherIncome.map((row) => row.income_date),
       ...data.savings.map((row) => row.savings_date),
       ...data.investments.map((row) => row.investment_date),
+      ...data.investorFunds.map((row) => row.date_received),
     ];
     values.forEach((value) => {
       const parsed = new Date(value);
       if (!Number.isNaN(parsed.getTime())) years.add(parsed.getFullYear());
     });
     return Array.from(years).sort((left, right) => right - left);
-  }, [currentYear, data.expenses, data.investments, data.otherIncome, data.sales, data.savings]);
+  }, [currentYear, data.expenses, data.investments, data.investorFunds, data.otherIncome, data.sales, data.savings]);
 
   const filtered = useMemo(() => {
     const sales = data.sales.filter((row) => inRange(row.sale_date, dateRange.from, dateRange.to));
@@ -405,6 +426,7 @@ export default function Dashboard() {
       otherIncome: data.otherIncome.filter((row) => inRange(row.income_date, dateRange.from, dateRange.to)),
       savings: data.savings.filter((row) => inRange(row.savings_date, dateRange.from, dateRange.to)),
       investments: data.investments.filter((row) => inRange(row.investment_date, dateRange.from, dateRange.to)),
+      investorFunds: data.investorFunds.filter((row) => inRange(row.date_received, dateRange.from, dateRange.to)),
       products: data.products,
     };
   }, [data, dateRange.from, dateRange.to]);
@@ -519,7 +541,7 @@ export default function Dashboard() {
             title="Available Business Money"
             value={formatCurrency(metrics.availableBusinessMoney)}
             icon={WalletCards}
-            helper="Paid sales + other income - expenses - savings - investments"
+            helper="Paid sales + other income + investor funds - expenses - expensed restocks - savings - investments"
             tooltip={SIKAFLOW_TOOLTIPS.availableBusinessMoney}
           />
           <MetricCard
@@ -533,7 +555,7 @@ export default function Dashboard() {
             title="Total Profit"
             value={formatCurrency(metrics.totalProfit)}
             icon={TrendingUp}
-            helper="Sales profit + other income - expenses"
+            helper="Paid sales revenue - COGS - expenses"
             tooltip={SIKAFLOW_TOOLTIPS.profit}
           />
           <MetricCard

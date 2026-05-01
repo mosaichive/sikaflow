@@ -3,11 +3,8 @@ import { AppLayout } from '@/components/AppLayout';
 import { EmptyState } from '@/components/EmptyState';
 import { formatCurrency, PAYMENT_METHODS } from '@/lib/constants';
 import {
-  calculateAvailableBusinessMoney,
+  calculateFinancialSnapshot,
   calculateSalesIncome,
-  calculateSalesProfit,
-  calculateTotalExpenses,
-  calculateTotalOtherIncome,
   getPaidAmount,
   isNegativeStockSale,
   isRecognizedSale,
@@ -261,37 +258,19 @@ export default function ReportsPage() {
     [filtered.saleItems, recognizedSaleIds],
   );
 
-  const availableMoney = useMemo(
-    () =>
-      calculateAvailableBusinessMoney({
-        sales: filtered.sales,
-        otherIncome: filtered.otherIncome,
-        expenses: filtered.expenses,
-        savings: filtered.savings,
-        investments: filtered.investments,
-      }),
-    [filtered],
-  );
-
   const reportStats = useMemo(() => {
-    const salesIncome = calculateSalesIncome(filtered.sales);
-    const otherIncome = calculateTotalOtherIncome(filtered.otherIncome);
-    const expenses = calculateTotalExpenses(filtered.expenses);
-    const salesProfit = calculateSalesProfit(filtered.sales, recognizedSaleItems);
-    const stockLeft = raw.products.reduce((sum, product) => sum + toNumber(product.quantity), 0);
-    const lowStockCount = raw.products.filter((product) => toNumber(product.quantity) <= Math.max(0, toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0))).length;
-    return {
-      salesIncome,
-      otherIncome,
-      totalIncome: salesIncome + otherIncome,
-      expenses,
-      salesProfit,
-      totalProfit: salesProfit + otherIncome - expenses,
-      availableBusinessMoney: availableMoney.availableBusinessMoney,
-      stockLeft,
-      lowStockCount,
-    };
-  }, [availableMoney.availableBusinessMoney, filtered, raw.products, recognizedSaleItems]);
+    return calculateFinancialSnapshot({
+      sales: filtered.sales,
+      saleItems: recognizedSaleItems,
+      products: raw.products,
+      otherIncome: filtered.otherIncome,
+      expenses: filtered.expenses,
+      savings: filtered.savings,
+      investments: filtered.investments,
+      investorFunds: filtered.funding,
+      restocks: filtered.restocks,
+    });
+  }, [filtered, raw.products, recognizedSaleItems]);
 
   const periodSales = useMemo(() => {
     const todayStart = new Date();
@@ -402,12 +381,14 @@ export default function ReportsPage() {
     () =>
       buildReportStatement({
         sales: raw.sales,
+        saleItems: raw.saleItems,
         expenses: raw.expenses,
         otherIncome: raw.otherIncome,
         savings: raw.savings,
         investments: raw.investments,
         fundings: raw.funding,
         restocks: raw.restocks,
+        products: raw.products,
         from,
         to,
       }),
@@ -534,13 +515,14 @@ export default function ReportsPage() {
 
         {invalidRange ? <p className="text-sm text-destructive">The start date must be before the end date.</p> : null}
 
-        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-7">
           <ReportMetric label="Available Business Money" value={formatCurrency(reportStats.availableBusinessMoney)} />
-          <ReportMetric label="Paid Sales Income" value={formatCurrency(reportStats.salesIncome)} />
-          <ReportMetric label="Other Income" value={formatCurrency(reportStats.otherIncome)} />
-          <ReportMetric label="Total Profit" value={formatCurrency(reportStats.totalProfit)} />
-          <ReportMetric label="Stock Left" value={`${reportStats.stockLeft} item(s)`} />
-          <ReportMetric label="Low Stock Alerts" value={`${reportStats.lowStockCount}`} />
+          <ReportMetric label="Sales Revenue" value={formatCurrency(reportStats.paidSalesRevenue)} />
+          <ReportMetric label="COGS" value={formatCurrency(reportStats.cogs)} />
+          <ReportMetric label="Expenses" value={formatCurrency(reportStats.operatingExpenses)} />
+          <ReportMetric label="Profit" value={formatCurrency(reportStats.profit)} />
+          <ReportMetric label="Restock Spending" value={formatCurrency(reportStats.totalRestockSpending)} />
+          <ReportMetric label="Stock Value (Cost)" value={formatCurrency(reportStats.stockValueCost)} />
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">

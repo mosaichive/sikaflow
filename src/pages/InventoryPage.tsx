@@ -15,7 +15,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency, PAYMENT_METHODS, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
-import { calculateAvailableBusinessMoney, calculateStockValue, toNumber } from '@/lib/sales-inventory';
+import { calculateFinancialSnapshot, calculateStockValue, toNumber } from '@/lib/sales-inventory';
 import { AlertTriangle, Boxes, PackagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -128,7 +128,7 @@ export default function InventoryPage() {
   const canManage = isAdmin || isManager;
 
   const load = useCallback(async () => {
-    const [productsRes, movementsRes, restocksRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes] = await Promise.allSettled([
+    const [productsRes, movementsRes, restocksRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes, investorFundsRes] = await Promise.allSettled([
       loadProductsCompat(false, businessId),
       loadStockMovementsCompat(100, businessId),
       supabase.from('restocks').select('*').order('restock_date', { ascending: false }),
@@ -137,6 +137,7 @@ export default function InventoryPage() {
       supabase.from('savings').select('amount'),
       supabase.from('investments').select('amount'),
       supabase.from('other_income' as any).select('amount'),
+      supabase.from('investor_funding').select('amount'),
     ]);
 
     if (productsRes.status === 'fulfilled') {
@@ -167,18 +168,22 @@ export default function InventoryPage() {
       setExpenses([]);
     }
 
-    const money = calculateAvailableBusinessMoney({
+    const money = calculateFinancialSnapshot({
       sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as any[]) : [],
       otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as any[]) : [],
       expenses: expensesRes.status === 'fulfilled' ? ((expensesRes.value.data || []) as any[]) : [],
       savings: savingsRes.status === 'fulfilled' ? ((savingsRes.value.data || []) as any[]) : [],
       investments: investmentsRes.status === 'fulfilled' ? ((investmentsRes.value.data || []) as any[]) : [],
+      investorFunds: investorFundsRes.status === 'fulfilled' ? ((investorFundsRes.value.data || []) as any[]) : [],
+      products: productsRes.status === 'fulfilled' ? ((productsRes.value || []) as ProductRow[]) : [],
+      restocks: restocksRes.status === 'fulfilled' ? ((restocksRes.value.data || []) as RestockRow[]) : [],
     });
 
     if (salesRes.status === 'rejected') logSupabaseError('inventory.load.sales', salesRes.reason);
     if (savingsRes.status === 'rejected') logSupabaseError('inventory.load.savings', savingsRes.reason);
     if (investmentsRes.status === 'rejected') logSupabaseError('inventory.load.investments', investmentsRes.reason);
     if (otherIncomeRes.status === 'rejected') logSupabaseError('inventory.load.otherIncome', otherIncomeRes.reason);
+    if (investorFundsRes.status === 'rejected') logSupabaseError('inventory.load.investorFunds', investorFundsRes.reason);
 
     setAvailableMoney(money.availableBusinessMoney);
   }, [businessId]);
@@ -192,6 +197,10 @@ export default function InventoryPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, () => { void load(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => { void load(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'savings' }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, () => { void load(); })
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);

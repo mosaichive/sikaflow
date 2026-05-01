@@ -5,6 +5,7 @@ export type OrderStatus = 'pending' | 'confirmed' | 'processing' | 'ready_for_pi
 type NumberLike = number | string | null | undefined;
 
 type SaleLike = {
+  id?: string | null;
   total?: NumberLike;
   amount_paid?: NumberLike;
   discount?: NumberLike;
@@ -34,6 +35,39 @@ type ProductLike = {
 
 type AmountLike = {
   amount?: NumberLike;
+};
+
+type ExpenseLike = AmountLike & {
+  description?: string | null;
+  category?: string | null;
+};
+
+type RestockLike = {
+  id?: string | null;
+  total_cost?: NumberLike;
+};
+
+export type FinancialSnapshot = {
+  openingCashBalance: number;
+  paidSalesRevenue: number;
+  cogs: number;
+  salesGrossProfit: number;
+  otherIncome: number;
+  investorFunds: number;
+  totalIncome: number;
+  operatingExpenses: number;
+  restockExpenseSpending: number;
+  totalSavings: number;
+  totalInvestments: number;
+  totalMoneyOut: number;
+  availableBusinessMoney: number;
+  profit: number;
+  stockLeft: number;
+  stockValueCost: number;
+  stockValueSelling: number;
+  lowStockCount: number;
+  negativeStockCount: number;
+  totalRestockSpending: number;
 };
 
 export function toNumber(value: NumberLike) {
@@ -78,7 +112,7 @@ export function calculateSalesIncome(sales: SaleLike[]) {
   return sales.reduce((sum, sale) => sum + (isRecognizedSale(sale) ? getPaidAmount(sale) : 0), 0);
 }
 
-export function calculateSalesProfit(sales: SaleLike[], saleItems: SaleItemLike[]) {
+export function calculateCOGS(sales: SaleLike[], saleItems: SaleItemLike[]) {
   const saleMap = new Map<string, SaleLike>();
   sales.forEach((sale: any) => {
     if (sale?.id) saleMap.set(sale.id, sale);
@@ -88,10 +122,13 @@ export function calculateSalesProfit(sales: SaleLike[], saleItems: SaleItemLike[
     const sale = item.sale_id ? saleMap.get(item.sale_id) : undefined;
     if (!sale || !isRecognizedSale(sale)) return sum;
     const quantity = Math.max(0, toNumber(item.quantity));
-    const unitPrice = toNumber(item.unit_price);
     const costPrice = toNumber(item.cost_price);
-    return sum + (unitPrice - costPrice) * quantity;
+    return sum + costPrice * quantity;
   }, 0);
+}
+
+export function calculateSalesProfit(sales: SaleLike[], saleItems: SaleItemLike[]) {
+  return calculateSalesIncome(sales) - calculateCOGS(sales, saleItems);
 }
 
 export function calculateTotalOtherIncome(rows: AmountLike[]) {
@@ -102,31 +139,156 @@ export function calculateTotalExpenses(rows: AmountLike[]) {
   return rows.reduce((sum, row) => sum + toNumber(row.amount), 0);
 }
 
+export function getRestockExpenseIdFromDescription(description: string | null | undefined) {
+  const match = String(description ?? '').match(/\[RESTOCK:([a-f0-9-]+)\]/i);
+  return match?.[1] ?? null;
+}
+
+export function isRestockExpenseRow(row: ExpenseLike) {
+  const description = normalizeText(row.description);
+  const category = normalizeText(row.category);
+  return !!getRestockExpenseIdFromDescription(row.description) || description.includes('inventory purchase (restock)') || category === 'restock';
+}
+
+export function calculateOperatingExpenses(rows: ExpenseLike[]) {
+  return rows.reduce((sum, row) => sum + (isRestockExpenseRow(row) ? 0 : toNumber(row.amount)), 0);
+}
+
+export function calculateRestockExpenseSpending(rows: ExpenseLike[]) {
+  return rows.reduce((sum, row) => sum + (isRestockExpenseRow(row) ? toNumber(row.amount) : 0), 0);
+}
+
+export function calculateStockLeft(products: ProductLike[]) {
+  return products.reduce((sum, product) => sum + toNumber(product.quantity), 0);
+}
+
+export function calculateLowStockCount(products: ProductLike[]) {
+  return products.filter((product) => {
+    if (product.is_archived) return false;
+    const quantity = toNumber(product.quantity);
+    const threshold = toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0);
+    return quantity > 0 && quantity <= threshold;
+  }).length;
+}
+
+export function calculateNegativeStockCount(products: ProductLike[]) {
+  return products.filter((product) => !product.is_archived && toNumber(product.quantity) < 0).length;
+}
+
+export function calculateRestockSpending(rows: RestockLike[]) {
+  return rows.reduce((sum, row) => sum + toNumber(row.total_cost), 0);
+}
+
+export function calculateFinancialSnapshot({
+  sales,
+  saleItems = [],
+  products = [],
+  otherIncome = [],
+  expenses = [],
+  savings = [],
+  investments = [],
+  investorFunds = [],
+  restocks = [],
+  openingCashBalance = 0,
+}: {
+  sales: SaleLike[];
+  saleItems?: SaleItemLike[];
+  products?: ProductLike[];
+  otherIncome?: AmountLike[];
+  expenses?: ExpenseLike[];
+  savings?: AmountLike[];
+  investments?: AmountLike[];
+  investorFunds?: AmountLike[];
+  restocks?: RestockLike[];
+  openingCashBalance?: NumberLike;
+}): FinancialSnapshot {
+  const opening = toNumber(openingCashBalance);
+  const paidSalesRevenue = calculateSalesIncome(sales);
+  const cogs = calculateCOGS(sales, saleItems);
+  const salesGrossProfit = paidSalesRevenue - cogs;
+  const totalOtherIncome = calculateTotalOtherIncome(otherIncome);
+  const totalInvestorFunds = calculateTotalOtherIncome(investorFunds);
+  const totalIncome = paidSalesRevenue + totalOtherIncome + totalInvestorFunds;
+  const operatingExpenses = calculateOperatingExpenses(expenses);
+  const restockExpenseSpending = calculateRestockExpenseSpending(expenses);
+  const totalSavings = calculateTotalExpenses(savings);
+  const totalInvestments = calculateTotalExpenses(investments);
+  const totalMoneyOut = operatingExpenses + restockExpenseSpending + totalSavings + totalInvestments;
+  const stockLeft = calculateStockLeft(products);
+  const stockValueCost = calculateStockValue(products, 'cost');
+  const stockValueSelling = calculateStockValue(products, 'selling');
+
+  return {
+    openingCashBalance: opening,
+    paidSalesRevenue,
+    cogs,
+    salesGrossProfit,
+    otherIncome: totalOtherIncome,
+    investorFunds: totalInvestorFunds,
+    totalIncome,
+    operatingExpenses,
+    restockExpenseSpending,
+    totalSavings,
+    totalInvestments,
+    totalMoneyOut,
+    availableBusinessMoney:
+      opening + totalIncome - operatingExpenses - restockExpenseSpending - totalSavings - totalInvestments,
+    profit: paidSalesRevenue - cogs - operatingExpenses,
+    stockLeft,
+    stockValueCost,
+    stockValueSelling,
+    lowStockCount: calculateLowStockCount(products),
+    negativeStockCount: calculateNegativeStockCount(products),
+    totalRestockSpending: calculateRestockSpending(restocks),
+  };
+}
+
 export function calculateAvailableBusinessMoney({
   sales,
+  saleItems = [],
+  products = [],
   otherIncome,
   expenses,
   savings,
   investments,
+  investorFunds = [],
+  restocks = [],
+  openingCashBalance = 0,
 }: {
   sales: SaleLike[];
+  saleItems?: SaleItemLike[];
+  products?: ProductLike[];
   otherIncome: AmountLike[];
-  expenses: AmountLike[];
+  expenses: ExpenseLike[];
   savings: AmountLike[];
   investments: AmountLike[];
+  investorFunds?: AmountLike[];
+  restocks?: RestockLike[];
+  openingCashBalance?: NumberLike;
 }) {
-  const salesIncome = calculateSalesIncome(sales);
-  const totalOtherIncome = calculateTotalOtherIncome(otherIncome);
-  const totalExpenses = calculateTotalExpenses(expenses);
-  const totalSavings = calculateTotalExpenses(savings);
-  const totalInvestments = calculateTotalExpenses(investments);
-  const totalIncome = salesIncome + totalOtherIncome;
+  const snapshot = calculateFinancialSnapshot({
+    sales,
+    saleItems,
+    products,
+    otherIncome,
+    expenses,
+    savings,
+    investments,
+    investorFunds,
+    restocks,
+    openingCashBalance,
+  });
 
   return {
-    salesIncome,
-    otherIncome: totalOtherIncome,
-    totalIncome,
-    availableBusinessMoney: totalIncome - totalExpenses - totalSavings - totalInvestments,
+    salesIncome: snapshot.paidSalesRevenue,
+    otherIncome: snapshot.otherIncome,
+    investorFunds: snapshot.investorFunds,
+    totalIncome: snapshot.totalIncome,
+    operatingExpenses: snapshot.operatingExpenses,
+    restockExpenseSpending: snapshot.restockExpenseSpending,
+    totalSavings: snapshot.totalSavings,
+    totalInvestments: snapshot.totalInvestments,
+    availableBusinessMoney: snapshot.availableBusinessMoney,
   };
 }
 
@@ -138,43 +300,52 @@ export function calculateDashboardTotals({
   expenses,
   savings,
   investments,
+  investorFunds = [],
+  restocks = [],
 }: {
   sales: SaleLike[];
   saleItems: SaleItemLike[];
   products: ProductLike[];
   otherIncome: AmountLike[];
-  expenses: AmountLike[];
+  expenses: ExpenseLike[];
   savings: AmountLike[];
   investments: AmountLike[];
+  investorFunds?: AmountLike[];
+  restocks?: RestockLike[];
 }) {
-  const money = calculateAvailableBusinessMoney({ sales, otherIncome, expenses, savings, investments });
-  const salesProfit = calculateSalesProfit(sales, saleItems);
-  const totalExpenses = calculateTotalExpenses(expenses);
-  const stockLeft = products.reduce((sum, product) => sum + toNumber(product.quantity), 0);
-  const lowStockCount = products.filter((product) => {
-    if (product.is_archived) return false;
-    const threshold = toNumber(product.low_stock_threshold ?? product.reorder_level ?? 0);
-    return toNumber(product.quantity) <= threshold;
-  }).length;
-  const negativeStockCount = products.filter((product) => !product.is_archived && toNumber(product.quantity) < 0).length;
+  const snapshot = calculateFinancialSnapshot({
+    sales,
+    saleItems,
+    products,
+    otherIncome,
+    expenses,
+    savings,
+    investments,
+    investorFunds,
+    restocks,
+  });
 
   return {
-    availableBusinessMoney: money.availableBusinessMoney,
-    salesIncome: money.salesIncome,
-    otherIncome: money.otherIncome,
-    totalIncome: money.totalIncome,
-    totalProfit: salesProfit + money.otherIncome - totalExpenses,
-    salesProfit,
-    totalExpenses,
-    stockLeft,
-    lowStockCount,
-    negativeStockCount,
+    availableBusinessMoney: snapshot.availableBusinessMoney,
+    salesIncome: snapshot.paidSalesRevenue,
+    otherIncome: snapshot.otherIncome,
+    investorFunds: snapshot.investorFunds,
+    totalIncome: snapshot.totalIncome,
+    totalProfit: snapshot.profit,
+    salesProfit: snapshot.salesGrossProfit,
+    cogs: snapshot.cogs,
+    totalExpenses: snapshot.operatingExpenses,
+    restockExpenseSpending: snapshot.restockExpenseSpending,
+    stockLeft: snapshot.stockLeft,
+    stockValueCost: snapshot.stockValueCost,
+    lowStockCount: snapshot.lowStockCount,
+    negativeStockCount: snapshot.negativeStockCount,
   };
 }
 
 export function calculateStockValue(products: ProductLike[], mode: 'cost' | 'selling' = 'selling') {
   return products.reduce((sum, product) => {
-    const quantity = Math.max(0, toNumber(product.quantity));
+    const quantity = toNumber(product.quantity);
     const unitValue = toNumber(mode === 'cost' ? product.cost_price : product.selling_price);
     return sum + quantity * unitValue;
   }, 0);

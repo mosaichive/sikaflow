@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/constants';
-import { calculateAvailableBusinessMoney } from '@/lib/business-money';
+import { calculateFinancialSnapshot } from '@/lib/business-money';
 import { useBusiness } from '@/context/BusinessContext';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -45,7 +45,11 @@ type SavingsRecord = {
   created_at: string;
 };
 
-type AmountRow = { amount: number | string };
+type AmountRow = {
+  amount: number | string;
+  category?: string | null;
+  description?: string | null;
+};
 
 const emptySavingForm = {
   savings_date: new Date().toISOString().slice(0, 10),
@@ -128,6 +132,7 @@ export default function SavingsPage() {
   const [expenses, setExpenses] = useState<AmountRow[]>([]);
   const [otherIncome, setOtherIncome] = useState<AmountRow[]>([]);
   const [investments, setInvestments] = useState<AmountRow[]>([]);
+  const [investorFunds, setInvestorFunds] = useState<AmountRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [savingOpen, setSavingOpen] = useState(false);
@@ -141,13 +146,14 @@ export default function SavingsPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
 
-    const [destinationsRes, savingsRes, salesRes, expensesRes, otherIncomeRes, investmentsRes] = await Promise.allSettled([
+    const [destinationsRes, savingsRes, salesRes, expensesRes, otherIncomeRes, investmentsRes, investorFundsRes] = await Promise.allSettled([
       supabase.from('bank_accounts').select('*').order('created_at', { ascending: false }),
       supabase.from('savings').select('*').order('savings_date', { ascending: false }),
       supabase.from('sales').select('id,total,amount_paid,payment_status,status,sale_date').order('sale_date', { ascending: false }),
-      supabase.from('expenses').select('amount'),
+      supabase.from('expenses').select('amount,category,description'),
       supabase.from('other_income' as any).select('amount'),
       supabase.from('investments').select('amount'),
+      supabase.from('investor_funding').select('amount'),
     ]);
 
     if (destinationsRes.status === 'fulfilled') {
@@ -198,6 +204,14 @@ export default function SavingsPage() {
       setInvestments([]);
     }
 
+    if (investorFundsRes.status === 'fulfilled') {
+      if (investorFundsRes.value.error) logSupabaseError('savings.load.investorFunds', investorFundsRes.value.error, { businessId });
+      setInvestorFunds((investorFundsRes.value.data || []) as AmountRow[]);
+    } else {
+      logSupabaseError('savings.load.investorFunds', investorFundsRes.reason, { businessId });
+      setInvestorFunds([]);
+    }
+
     setLoading(false);
   }, [businessId]);
 
@@ -212,6 +226,7 @@ export default function SavingsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => { void fetchAll(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, () => { void fetchAll(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => { void fetchAll(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, () => { void fetchAll(); })
       .subscribe();
 
     return () => {
@@ -221,14 +236,15 @@ export default function SavingsPage() {
 
   const money = useMemo(
     () =>
-      calculateAvailableBusinessMoney({
+      calculateFinancialSnapshot({
         sales,
         otherIncome,
         expenses,
         savings,
         investments,
+        investorFunds,
       }),
-    [expenses, investments, otherIncome, sales, savings],
+    [expenses, investments, investorFunds, otherIncome, sales, savings],
   );
 
   const availableBusinessMoney = money.availableBusinessMoney;

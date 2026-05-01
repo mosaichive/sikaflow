@@ -1,5 +1,6 @@
 export {
   calculateAvailableBusinessMoney,
+  calculateFinancialSnapshot,
   calculateSalesIncome as getRecognizedSalesIncome,
   calculateTotalOtherIncome as sumAmounts,
   normalizeText,

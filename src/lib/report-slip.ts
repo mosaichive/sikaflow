@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 import sikaflowLogo from '@/assets/sikaflow-logo.png';
 import notoSansFontUrl from '@/assets/fonts/NotoSans-VariableFont.ttf';
 import { formatCurrency } from '@/lib/constants';
-import { getPaidAmount, isRecognizedSale } from '@/lib/sales-inventory';
+import { calculateFinancialSnapshot, getPaidAmount, getRestockExpenseIdFromDescription, isRecognizedSale, isRestockExpenseRow } from '@/lib/sales-inventory';
 
 export type ReportRangePreset = 'today' | 'week' | 'month' | 'year' | 'custom';
 
@@ -25,17 +25,22 @@ export type ReportStatementSummary = {
   totalInvestments: number;
   totalInvestorFunds: number;
   totalRestocks: number;
-  netPosition: number;
+  cogs: number;
+  profit: number;
+  stockValueCost: number;
+  availableBusinessMoney: number;
 };
 
 type ReportSourceArgs = {
   sales: any[];
+  saleItems: any[];
   expenses: any[];
   otherIncome: any[];
   savings: any[];
   investments: any[];
   fundings: any[];
   restocks: any[];
+  products: any[];
   from: string;
   to: string;
 };
@@ -127,7 +132,11 @@ function orderedTransactions({
   investments,
   fundings,
   restocks,
-}: Omit<ReportSourceArgs, 'from' | 'to'>) {
+  restockExpenseIds,
+}: Pick<ReportSourceArgs, 'sales' | 'expenses' | 'otherIncome' | 'savings' | 'investments' | 'fundings' | 'restocks'> & {
+  restockExpenseIds: Set<string>;
+}) {
+  const nonRestockExpenses = expenses.filter((expense) => !isRestockExpenseRow(expense));
   const rows: BaseTransaction[] = [
     ...sales
       .filter((sale) => isRecognizedSale(sale))
@@ -143,7 +152,7 @@ function orderedTransactions({
       moneyIn: getPaidAmount(sale),
       moneyOut: 0,
     })),
-    ...expenses.map((expense) => ({
+    ...nonRestockExpenses.map((expense) => ({
       date: expense.expense_date,
       timestamp: asTimestamp(expense.expense_date),
       reference: transactionRef('EXP', expense.reference, expense.id),
@@ -196,10 +205,14 @@ function orderedTransactions({
       date: restock.restock_date,
       timestamp: asTimestamp(restock.restock_date),
       reference: transactionRef('RST', restock.reference, restock.id),
-      type: 'Restock',
-      description: [restock.product_name, restock.supplier].filter(Boolean).join(' • ') || 'Inventory restock',
+      type: 'Inventory Purchase (Restock)',
+      description: [
+        restock.product_name,
+        restock.supplier,
+        restockExpenseIds.has(String(restock.id)) ? 'Recorded as expense' : 'Stock only',
+      ].filter(Boolean).join(' • ') || 'Inventory purchase',
       moneyIn: 0,
-      moneyOut: Number(restock.total_cost ?? 0),
+      moneyOut: restockExpenseIds.has(String(restock.id)) ? Number(restock.total_cost ?? 0) : 0,
     })),
   ];
 
@@ -208,16 +221,21 @@ function orderedTransactions({
 
 export function buildReportStatement({
   sales,
+  saleItems,
   expenses,
   otherIncome,
   savings,
   investments,
   fundings,
   restocks,
+  products,
   from,
   to,
 }: ReportSourceArgs) {
-  const ordered = orderedTransactions({ sales, expenses, otherIncome, savings, investments, fundings, restocks });
+  const restockExpenseIds = new Set(
+    expenses.map((expense) => getRestockExpenseIdFromDescription(expense.description)).filter(Boolean).map(String),
+  );
+  const ordered = orderedTransactions({ sales, expenses, otherIncome, savings, investments, fundings, restocks, restockExpenseIds });
   const fromMs = startOfDayMs(from);
   const toMs = endOfDayMs(to);
   const inRange = (value: string | null | undefined) => {
@@ -245,15 +263,26 @@ export function buildReportStatement({
       };
     });
 
-  const totalSales = sales
-    .filter((sale) => inRange(sale.sale_date) && isRecognizedSale(sale))
-    .reduce((sum, sale) => sum + getPaidAmount(sale), 0);
-  const totalOtherIncome = otherIncome.filter((entry) => inRange(entry.income_date)).reduce((sum, entry) => sum + Number(entry.amount ?? 0), 0);
-  const totalExpenses = expenses.filter((expense) => inRange(expense.expense_date)).reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
-  const totalSavings = savings.filter((saving) => inRange(saving.savings_date)).reduce((sum, saving) => sum + Number(saving.amount ?? 0), 0);
-  const totalInvestments = investments.filter((investment) => inRange(investment.investment_date)).reduce((sum, investment) => sum + Number(investment.amount ?? 0), 0);
-  const totalInvestorFunds = fundings.filter((funding) => inRange(funding.date_received)).reduce((sum, funding) => sum + Number(funding.amount ?? 0), 0);
-  const totalRestocks = restocks.filter((restock) => inRange(restock.restock_date)).reduce((sum, restock) => sum + Number(restock.total_cost ?? 0), 0);
+  const filteredSales = sales.filter((sale) => inRange(sale.sale_date));
+  const filteredSaleIds = new Set(filteredSales.map((sale) => sale.id));
+  const filteredSaleItems = saleItems.filter((item) => filteredSaleIds.has(item.sale_id));
+  const filteredExpenses = expenses.filter((expense) => inRange(expense.expense_date));
+  const filteredOtherIncome = otherIncome.filter((entry) => inRange(entry.income_date));
+  const filteredSavings = savings.filter((saving) => inRange(saving.savings_date));
+  const filteredInvestments = investments.filter((investment) => inRange(investment.investment_date));
+  const filteredFundings = fundings.filter((funding) => inRange(funding.date_received));
+  const filteredRestocks = restocks.filter((restock) => inRange(restock.restock_date));
+  const financials = calculateFinancialSnapshot({
+    sales: filteredSales,
+    saleItems: filteredSaleItems,
+    products,
+    otherIncome: filteredOtherIncome,
+    expenses: filteredExpenses,
+    savings: filteredSavings,
+    investments: filteredInvestments,
+    investorFunds: filteredFundings,
+    restocks: filteredRestocks,
+  });
 
   const totalMoneyIn = rows.reduce((sum, row) => sum + row.moneyIn, 0);
   const totalMoneyOut = rows.reduce((sum, row) => sum + row.moneyOut, 0);
@@ -266,14 +295,17 @@ export function buildReportStatement({
     totalMoneyIn,
     totalMoneyOut,
     summary: {
-      totalSales,
-      totalOtherIncome,
-      totalExpenses,
-      totalSavings,
-      totalInvestments,
-      totalInvestorFunds,
-      totalRestocks,
-      netPosition: totalSales + totalOtherIncome + totalInvestorFunds - totalExpenses - totalSavings - totalInvestments - totalRestocks,
+      totalSales: financials.paidSalesRevenue,
+      totalOtherIncome: financials.otherIncome,
+      totalExpenses: financials.operatingExpenses,
+      totalSavings: financials.totalSavings,
+      totalInvestments: financials.totalInvestments,
+      totalInvestorFunds: financials.investorFunds,
+      totalRestocks: financials.totalRestockSpending,
+      cogs: financials.cogs,
+      profit: financials.profit,
+      stockValueCost: financials.stockValueCost,
+      availableBusinessMoney: financials.availableBusinessMoney,
     } satisfies ReportStatementSummary,
   };
 }
@@ -587,9 +619,11 @@ export async function downloadReportSlipPdf({
     theme: 'grid',
     body: [
       ['Total Sales', formatCurrency(summary.totalSales), 'Other Income', formatCurrency(summary.totalOtherIncome)],
-      ['Total Expenses', formatCurrency(summary.totalExpenses), 'Total Savings', formatCurrency(summary.totalSavings)],
+      ['COGS', formatCurrency(summary.cogs), 'Total Expenses', formatCurrency(summary.totalExpenses)],
+      ['Total Restocks', formatCurrency(summary.totalRestocks), 'Total Savings', formatCurrency(summary.totalSavings)],
       ['Total Investments', formatCurrency(summary.totalInvestments), 'Total Investor Funds', formatCurrency(summary.totalInvestorFunds)],
-      ['Total Restocks', formatCurrency(summary.totalRestocks), 'Net Position', formatCurrency(summary.netPosition)],
+      ['Profit', formatCurrency(summary.profit), 'Stock Value (Cost)', formatCurrency(summary.stockValueCost)],
+      ['Available Business Money', formatCurrency(summary.availableBusinessMoney), 'Closing Balance', formatCurrency(closingBalance)],
     ],
     styles: {
       font: 'NotoSans',
@@ -612,7 +646,7 @@ export async function downloadReportSlipPdf({
   doc.setFontSize(8.5);
   doc.setTextColor(...COLORS.muted);
   doc.text(
-    `Net position reflects sales income, other income, and investor funds against expenses, savings, investments, and ${formatCurrency(summary.totalRestocks)} in restock spending.`,
+    `Cash movement reflects paid sales, other income, investor funds, and only restocks recorded as expense. Profit uses paid sales revenue minus COGS and operating expenses.`,
     40,
     noteY,
     { maxWidth: pageWidth - 80 },
