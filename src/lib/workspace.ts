@@ -497,7 +497,7 @@ export async function insertExpenseRecord(
   return insertWithOptionalColumnFallback({
     table: 'expenses',
     payload,
-    optionalColumns: ['business_id', 'payment_method', 'attachment_path'],
+    optionalColumns: ['business_id', 'payment_method', 'attachment_path', 'attachment_name'],
     context: 'workspace.insertExpense',
   });
 }
@@ -511,7 +511,7 @@ export async function updateExpenseRecord(
     matchColumn: 'id',
     matchValue: expenseId,
     payload,
-    optionalColumns: ['business_id', 'payment_method', 'attachment_path'],
+    optionalColumns: ['business_id', 'payment_method', 'attachment_path', 'attachment_name'],
     context: 'workspace.updateExpense',
   });
 }

@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Receipt, X, Paperclip, Trash2, WalletCards } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { getErrorMessage, insertExpenseRecord, logSupabaseError } from '@/lib/workspace';
 
 type ExpenseRow = {
   id: string;
@@ -145,7 +146,7 @@ export default function ExpensesPage() {
     setLoading(true);
     try {
       const receipt = await uploadReceipt();
-      const { error } = await supabase.from('expenses').insert({
+      await insertExpenseRecord({
         business_id: businessId,
         category: form.category,
         description: form.description.trim(),
@@ -157,12 +158,16 @@ export default function ExpensesPage() {
         recorded_by: user.id,
         recorded_by_name: displayName || user.email || 'Team member',
       });
-      if (error) throw error;
       toast({ title: 'Expense recorded', description: 'This expense now reduces available business money and profit.' });
       resetForm();
       setOpen(false);
-    } catch (error: any) {
-      toast({ title: 'Could not record expense', description: error.message, variant: 'destructive' });
+    } catch (error) {
+      logSupabaseError('expenses.record', error, {
+        businessId,
+        userId: user.id,
+        hasReceipt: !!receiptFile,
+      });
+      toast({ title: 'Could not record expense', description: getErrorMessage(error), variant: 'destructive' });
     } finally {
       setLoading(false);
     }
