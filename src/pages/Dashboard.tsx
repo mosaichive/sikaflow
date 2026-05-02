@@ -14,9 +14,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCurrency, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { calculateDashboardTotals, getPaidAmount, getIsoDate, sumTodaySales, toNumber } from '@/lib/sales-inventory';
-import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney, warnIfFinancialInconsistency } from '@/lib/business-money';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA } from '@/lib/business-money';
 import { cn } from '@/lib/utils';
 import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
+import { useBusinessFinancials } from '@/context/BusinessFinancialsContext';
 
 type SaleRow = {
   id: string;
@@ -285,6 +286,7 @@ export default function Dashboard() {
   const { business } = useBusiness();
   const businessId = business?.id ?? null;
   const { isAdmin, isManager, displayName, onboardingCompleted, user } = useAuth();
+  const { financials, loading: financialsLoading } = useBusinessFinancials();
   const [data, setData] = useState<DashboardData>({
     sales: [],
     saleItems: [],
@@ -441,31 +443,6 @@ export default function Dashboard() {
   }, [data, dateRange.from, dateRange.to]);
 
   const metrics = useMemo(() => calculateDashboardTotals(filtered), [filtered]);
-  const availableBusinessMoney = useMemo(
-    () =>
-      calculateAvailableBusinessMoney({
-        sales: data.sales,
-        saleItems: data.saleItems,
-        products: data.products,
-        otherIncome: data.otherIncome,
-        expenses: data.expenses,
-        savings: data.savings,
-        investments: data.investments,
-        investorFunds: data.investorFunds,
-        restocks: data.restocks,
-      }),
-    [data],
-  );
-
-  useEffect(() => {
-    const businessWideMetrics = calculateDashboardTotals(data);
-    warnIfFinancialInconsistency(
-      'dashboard.availableBusinessMoney',
-      availableBusinessMoney,
-      businessWideMetrics.availableBusinessMoney,
-    );
-  }, [availableBusinessMoney, data]);
-
   const dailySales = useMemo(() => sumTodaySales(data.sales), [data.sales]);
   const yesterdaySales = useMemo(() => {
     const yesterday = new Date();
@@ -488,7 +465,7 @@ export default function Dashboard() {
     [data.products],
   );
 
-  if (loading) {
+  if (loading || financialsLoading) {
     return (
       <AppLayout title="Dashboard">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -573,7 +550,7 @@ export default function Dashboard() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <MetricCard
             title="Available Business Money"
-            value={formatCurrency(availableBusinessMoney)}
+            value={formatCurrency(financials.availableBusinessMoney)}
             icon={WalletCards}
             helper={AVAILABLE_BUSINESS_MONEY_FORMULA}
             tooltip={SIKAFLOW_TOOLTIPS.availableBusinessMoney}
@@ -587,30 +564,30 @@ export default function Dashboard() {
           />
           <MetricCard
             title="Total Profit"
-            value={formatCurrency(metrics.totalProfit)}
+            value={formatCurrency(financials.profit)}
             icon={TrendingUp}
             helper="Paid sales revenue - COGS - expenses"
             tooltip={SIKAFLOW_TOOLTIPS.profit}
           />
           <MetricCard
             title="Stock Left"
-            value={metrics.stockLeft.toLocaleString('en-GH')}
+            value={financials.stockLeft.toLocaleString('en-GH')}
             icon={Boxes}
             helper="Current inventory quantity across active products"
           />
           <MetricCard
             title="Other Income"
-            value={formatCurrency(metrics.otherIncome)}
+            value={formatCurrency(financials.otherIncome)}
             icon={HandCoins}
             helper="Service, delivery fee, commission, and miscellaneous income"
             tooltip={SIKAFLOW_TOOLTIPS.otherIncome}
           />
           <MetricCard
             title="Low Stock Alerts"
-            value={metrics.lowStockCount.toLocaleString('en-GH')}
+            value={financials.lowStockCount.toLocaleString('en-GH')}
             icon={AlertTriangle}
             helper={lowStockProducts.length > 0 ? lowStockProducts.map((product) => product.name).join(', ') : 'No low stock products right now'}
-            valueClassName={metrics.lowStockCount > 0 ? 'text-amber-500' : undefined}
+            valueClassName={financials.lowStockCount > 0 ? 'text-amber-500' : undefined}
           />
         </div>
 

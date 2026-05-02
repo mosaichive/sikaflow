@@ -24,6 +24,7 @@ import { useToast } from '@/hooks/use-toast';
 import { BarChart3, CalendarRange, Download, FileText, FilterX, PackageSearch, Receipt, TrendingUp, WalletCards } from 'lucide-react';
 import { buildReportStatement, downloadReportSlipPdf } from '@/lib/report-slip';
 import { loadProductsCompat, loadStockMovementsCompat, logSupabaseError } from '@/lib/workspace';
+import { useBusinessFinancials } from '@/context/BusinessFinancialsContext';
 
 type RawReportData = {
   sales: any[];
@@ -127,6 +128,7 @@ export default function ReportsPage() {
   const { business, businessId } = useBusiness();
   const { displayName, user } = useAuth();
   const { toast } = useToast();
+  const { financials, loading: financialsLoading } = useBusinessFinancials();
 
   const [year, setYear] = useState(currentYear);
   const [monthEnabled, setMonthEnabled] = useState(false);
@@ -415,8 +417,9 @@ export default function ReportsPage() {
         openingStockMovements,
         from,
         to,
+        availableBusinessMoneyOverride: financials.availableBusinessMoney,
       }),
-    [from, openingStockMovements, raw, to],
+    [financials.availableBusinessMoney, from, openingStockMovements, raw, to],
   );
 
   const yearOptions = useMemo(() => {
@@ -540,14 +543,17 @@ export default function ReportsPage() {
         {invalidRange ? <p className="text-sm text-destructive">The start date must be before the end date.</p> : null}
 
         <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-8">
-          <ReportMetric label="Available Business Money" value={formatCurrency(reportStats.availableBusinessMoney)} />
+          <ReportMetric
+            label="Available Business Money"
+            value={financialsLoading ? 'Loading…' : formatCurrency(financials.availableBusinessMoney)}
+          />
           <ReportMetric label="Sales Revenue" value={formatCurrency(reportStats.paidSalesRevenue)} />
           <ReportMetric label="COGS" value={formatCurrency(reportStats.cogs)} />
           <ReportMetric label="Expenses" value={formatCurrency(reportStats.operatingExpenses)} />
           <ReportMetric label="Profit" value={formatCurrency(reportStats.profit)} />
           <ReportMetric label="Opening Stock" value={formatCurrency(openingStockValue)} />
           <ReportMetric label="Restock Spending" value={formatCurrency(reportStats.totalRestockSpending)} />
-          <ReportMetric label="Stock Value (Cost)" value={formatCurrency(reportStats.stockValueCost)} />
+          <ReportMetric label="Stock Value (Cost)" value={financialsLoading ? 'Loading…' : formatCurrency(financials.stockValue)} />
         </div>
 
         <div className="grid gap-4 md:grid-cols-4">

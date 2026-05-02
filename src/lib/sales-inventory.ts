@@ -218,7 +218,7 @@ export function calculateFinancialSnapshot({
   const restockExpenseSpending = calculateRestockExpenseSpending(restocks);
   const totalSavings = calculateTotalExpenses(savings);
   const totalInvestments = calculateTotalExpenses(investments);
-  const totalMoneyOut = operatingExpenses + restockExpenseSpending + totalSavings + totalInvestments;
+  const totalMoneyOut = operatingExpenses + totalRestockSpending + totalSavings + totalInvestments;
   const stockLeft = calculateStockLeft(products);
   const stockValueCost = calculateStockValue(products, 'cost');
   const stockValueSelling = calculateStockValue(products, 'selling');
@@ -237,7 +237,7 @@ export function calculateFinancialSnapshot({
     totalInvestments,
     totalMoneyOut,
     availableBusinessMoney:
-      opening + totalIncome - operatingExpenses - restockExpenseSpending - totalSavings - totalInvestments,
+      opening + totalIncome - operatingExpenses - totalRestockSpending - totalSavings - totalInvestments,
     profit: paidSalesRevenue - cogs - operatingExpenses,
     stockLeft,
     stockValueCost,
@@ -290,7 +290,7 @@ export function calculateAvailableBusinessMoney({
     investorFunds: snapshot.investorFunds,
     totalIncome: snapshot.totalIncome,
     operatingExpenses: snapshot.operatingExpenses,
-    restockExpenseSpending: snapshot.restockExpenseSpending,
+    restockExpenseSpending: snapshot.totalRestockSpending,
     totalSavings: snapshot.totalSavings,
     totalInvestments: snapshot.totalInvestments,
     availableBusinessMoney: snapshot.availableBusinessMoney,
@@ -340,7 +340,7 @@ export function calculateDashboardTotals({
     salesProfit: snapshot.salesGrossProfit,
     cogs: snapshot.cogs,
     totalExpenses: snapshot.operatingExpenses,
-    restockExpenseSpending: snapshot.restockExpenseSpending,
+    restockExpenseSpending: snapshot.totalRestockSpending,
     stockLeft: snapshot.stockLeft,
     stockValueCost: snapshot.stockValueCost,
     lowStockCount: snapshot.lowStockCount,

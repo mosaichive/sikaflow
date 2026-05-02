@@ -62,6 +62,6 @@ export const STOCK_MOVEMENT_TYPES = [
 export const SIKAFLOW_TOOLTIPS = {
   openingStock: 'Opening Stock is the inventory you already have on hand when you start using SikaFlow. It affects stock and profit cost basis, but it is not income or cash.',
   otherIncome: 'Other Income is business income that does not come from product sales, like services, delivery fees, commissions, or miscellaneous charges.',
-  availableBusinessMoney: 'Available Business Money is the working cash left after paid sales, other income, and investor funds, minus operating expenses, restocks marked as expense, savings, and investments.',
+  availableBusinessMoney: 'Available Business Money is the working cash left after paid sales, other income, and investor funds, minus operating expenses, all normal restocks, savings, and investments. Opening Stock is excluded.',
   profit: 'Profit follows a simple sales formula: paid sales revenue minus COGS and operating expenses. Savings, investments, and investor funds do not change profit.',
 } as const;

@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth, type AppRole } from "@/context/AuthContext";
 import { BusinessProvider, useBusiness } from "@/context/BusinessContext";
+import { BusinessFinancialsProvider } from "@/context/BusinessFinancialsContext";
 import { SubscriptionProvider, useSubscription } from "@/context/SubscriptionContext";
 import { SignInPage, SignUpPage } from "./pages/SignInPage";
 import AuthCallbackPage from "./pages/AuthCallbackPage";
@@ -100,11 +101,12 @@ const App = () => (
     <TooltipProvider>
       <AuthProvider>
         <BusinessProvider>
-          <SubscriptionProvider>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter>
-              <Routes>
+          <BusinessFinancialsProvider>
+            <SubscriptionProvider>
+              <Toaster />
+              <Sonner />
+              <BrowserRouter>
+                <Routes>
                 <Route path="/sign-in/*" element={<AuthRoute><SignInPage /></AuthRoute>} />
                 <Route path="/sign-up/*" element={<AuthRoute><SignUpPage /></AuthRoute>} />
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
@@ -145,9 +147,10 @@ const App = () => (
                 <Route path="/settings" element={<ProtectedRoute adminOnly allowReadOnly><SettingsPage /></ProtectedRoute>} />
                 <Route path="/billing" element={<ProtectedRoute adminOnly allowReadOnly><BillingPage /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
-              </Routes>
-            </BrowserRouter>
-          </SubscriptionProvider>
+                </Routes>
+              </BrowserRouter>
+            </SubscriptionProvider>
+          </BusinessFinancialsProvider>
         </BusinessProvider>
       </AuthProvider>
     </TooltipProvider>

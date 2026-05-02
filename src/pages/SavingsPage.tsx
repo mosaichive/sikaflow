@@ -11,8 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/constants';
-import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney } from '@/lib/business-money';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA } from '@/lib/business-money';
 import { useBusiness } from '@/context/BusinessContext';
+import { useBusinessFinancials } from '@/context/BusinessFinancialsContext';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -43,18 +44,6 @@ type SavingsRecord = {
   reference: string | null;
   recorded_by: string;
   created_at: string;
-};
-
-type AmountRow = {
-  amount: number | string;
-  category?: string | null;
-  description?: string | null;
-};
-
-type RestockMoneyRow = {
-  amount?: never;
-  total_cost: number | string;
-  status?: string | null;
 };
 
 const emptySavingForm = {
@@ -130,16 +119,11 @@ function getDestinationTypeIcon(type: string | null | undefined) {
 export default function SavingsPage() {
   const { user, isAdmin, isManager, displayName } = useAuth();
   const { businessId } = useBusiness();
+  const { financials, loading: financialsLoading } = useBusinessFinancials();
   const { toast } = useToast();
 
   const [destinations, setDestinations] = useState<SavingsDestination[]>([]);
   const [savings, setSavings] = useState<SavingsRecord[]>([]);
-  const [sales, setSales] = useState<any[]>([]);
-  const [expenses, setExpenses] = useState<AmountRow[]>([]);
-  const [otherIncome, setOtherIncome] = useState<AmountRow[]>([]);
-  const [investments, setInvestments] = useState<AmountRow[]>([]);
-  const [investorFunds, setInvestorFunds] = useState<AmountRow[]>([]);
-  const [restocks, setRestocks] = useState<RestockMoneyRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [savingOpen, setSavingOpen] = useState(false);
@@ -153,15 +137,9 @@ export default function SavingsPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
 
-    const [destinationsRes, savingsRes, salesRes, expensesRes, otherIncomeRes, investmentsRes, investorFundsRes, restocksRes] = await Promise.allSettled([
-      supabase.from('bank_accounts').select('*').order('created_at', { ascending: false }),
-      supabase.from('savings').select('*').order('savings_date', { ascending: false }),
-      supabase.from('sales').select('id,total,amount_paid,payment_status,status,sale_date').order('sale_date', { ascending: false }),
-      supabase.from('expenses').select('amount,category,description'),
-      supabase.from('other_income' as any).select('amount'),
-      supabase.from('investments').select('amount'),
-      supabase.from('investor_funding').select('amount'),
-      supabase.from('restocks').select('total_cost,status').order('restock_date', { ascending: false }),
+    const [destinationsRes, savingsRes] = await Promise.allSettled([
+      supabase.from('bank_accounts').select('*').eq('business_id', businessId).order('created_at', { ascending: false }),
+      supabase.from('savings').select('*').eq('business_id', businessId).order('savings_date', { ascending: false }),
     ]);
 
     if (destinationsRes.status === 'fulfilled') {
@@ -180,90 +158,25 @@ export default function SavingsPage() {
       setSavings([]);
     }
 
-    if (salesRes.status === 'fulfilled') {
-      if (salesRes.value.error) logSupabaseError('savings.load.sales', salesRes.value.error, { businessId });
-      setSales(salesRes.value.data || []);
-    } else {
-      logSupabaseError('savings.load.sales', salesRes.reason, { businessId });
-      setSales([]);
-    }
-
-    if (expensesRes.status === 'fulfilled') {
-      if (expensesRes.value.error) logSupabaseError('savings.load.expenses', expensesRes.value.error, { businessId });
-      setExpenses((expensesRes.value.data || []) as AmountRow[]);
-    } else {
-      logSupabaseError('savings.load.expenses', expensesRes.reason, { businessId });
-      setExpenses([]);
-    }
-
-    if (otherIncomeRes.status === 'fulfilled') {
-      if (otherIncomeRes.value.error) logSupabaseError('savings.load.otherIncome', otherIncomeRes.value.error, { businessId });
-      setOtherIncome((otherIncomeRes.value.data || []) as AmountRow[]);
-    } else {
-      logSupabaseError('savings.load.otherIncome', otherIncomeRes.reason, { businessId });
-      setOtherIncome([]);
-    }
-
-    if (investmentsRes.status === 'fulfilled') {
-      if (investmentsRes.value.error) logSupabaseError('savings.load.investments', investmentsRes.value.error, { businessId });
-      setInvestments((investmentsRes.value.data || []) as AmountRow[]);
-    } else {
-      logSupabaseError('savings.load.investments', investmentsRes.reason, { businessId });
-      setInvestments([]);
-    }
-
-    if (investorFundsRes.status === 'fulfilled') {
-      if (investorFundsRes.value.error) logSupabaseError('savings.load.investorFunds', investorFundsRes.value.error, { businessId });
-      setInvestorFunds((investorFundsRes.value.data || []) as AmountRow[]);
-    } else {
-      logSupabaseError('savings.load.investorFunds', investorFundsRes.reason, { businessId });
-      setInvestorFunds([]);
-    }
-
-    if (restocksRes.status === 'fulfilled') {
-      if (restocksRes.value.error) logSupabaseError('savings.load.restocks', restocksRes.value.error, { businessId });
-      setRestocks((restocksRes.value.data || []) as RestockMoneyRow[]);
-    } else {
-      logSupabaseError('savings.load.restocks', restocksRes.reason, { businessId });
-      setRestocks([]);
-    }
-
     setLoading(false);
   }, [businessId]);
 
   useEffect(() => {
     void fetchAll();
+    if (!businessId) return;
 
     const channel = supabase
       .channel('savings-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts' }, () => { void fetchAll(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'savings' }, () => { void fetchAll(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => { void fetchAll(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => { void fetchAll(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, () => { void fetchAll(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => { void fetchAll(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, () => { void fetchAll(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, () => { void fetchAll(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts', filter: `business_id=eq.${businessId}` }, () => { void fetchAll(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'savings', filter: `business_id=eq.${businessId}` }, () => { void fetchAll(); })
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [fetchAll]);
+  }, [businessId, fetchAll]);
 
-  const availableBusinessMoney = useMemo(
-    () =>
-      calculateAvailableBusinessMoney({
-        sales,
-        otherIncome,
-        expenses,
-        savings,
-        investments,
-        investorFunds,
-        restocks,
-      }),
-    [expenses, investments, investorFunds, otherIncome, restocks, sales, savings],
-  );
+  const availableBusinessMoney = financials.availableBusinessMoney;
 
   const totalSavings = savings.reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const filteredDestinations = useMemo(
@@ -313,6 +226,10 @@ export default function SavingsPage() {
 
   async function handleSaveSaving() {
     if (!user || !businessId) return;
+    if (financialsLoading) {
+      toast({ title: 'Financials still loading', description: 'Please wait a moment and try again.' });
+      return;
+    }
     if (!savingForm.amount || savingForm.amount <= 0) {
       toast({ title: 'Amount required', description: 'Enter a valid savings amount.', variant: 'destructive' });
       return;
@@ -443,7 +360,7 @@ export default function SavingsPage() {
           <CardContent className="flex items-center justify-between gap-4 p-5">
             <div>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Available Business Money</p>
-              <p className="mt-1 text-2xl font-bold text-primary">{formatCurrency(availableBusinessMoney)}</p>
+              <p className="mt-1 text-2xl font-bold text-primary">{financialsLoading ? 'Loading…' : formatCurrency(availableBusinessMoney)}</p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {AVAILABLE_BUSINESS_MONEY_FORMULA}
               </p>
@@ -788,11 +705,13 @@ export default function SavingsPage() {
                   <div className="rounded-xl border border-border/70 bg-secondary/20 p-4">
                     <p className="text-xs uppercase tracking-wider text-muted-foreground">Available Business Money</p>
                     <p className="mt-1 text-xl font-semibold text-foreground">
-                      {formatCurrency(availableBusinessMoney + Number(savings.find((row) => row.id === editSavingId)?.amount || 0))}
+                      {financialsLoading
+                        ? 'Loading…'
+                        : formatCurrency(availableBusinessMoney + Number(savings.find((row) => row.id === editSavingId)?.amount || 0))}
                     </p>
                   </div>
 
-                  <Button onClick={handleSaveSaving} className="w-full">
+                  <Button onClick={handleSaveSaving} className="w-full" disabled={financialsLoading}>
                     {editSavingId ? 'Update' : 'Save'} Savings
                   </Button>
                 </div>

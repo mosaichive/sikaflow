@@ -45,6 +45,7 @@ type ReportSourceArgs = {
   openingStockMovements?: any[];
   from: string;
   to: string;
+  availableBusinessMoneyOverride?: number;
 };
 
 type BaseTransaction = Omit<ReportStatementRow, 'runningBalance'> & { timestamp: number };
@@ -241,6 +242,7 @@ export function buildReportStatement({
   openingStockMovements = [],
   from,
   to,
+  availableBusinessMoneyOverride,
 }: ReportSourceArgs) {
   const ordered = orderedTransactions({ sales, expenses, otherIncome, savings, investments, fundings, restocks, openingStockMovements });
   const fromMs = startOfDayMs(from);
@@ -317,7 +319,10 @@ export function buildReportStatement({
       cogs: financials.cogs,
       profit: financials.profit,
       stockValueCost: financials.stockValueCost,
-      availableBusinessMoney: financials.availableBusinessMoney,
+      availableBusinessMoney:
+        typeof availableBusinessMoneyOverride === 'number'
+          ? availableBusinessMoneyOverride
+          : financials.availableBusinessMoney,
     } satisfies ReportStatementSummary,
   };
 }

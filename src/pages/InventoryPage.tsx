@@ -13,10 +13,11 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
+import { useBusinessFinancials } from '@/context/BusinessFinancialsContext';
 import { supabase } from '@/integrations/supabase/client';
 import { formatCurrency, PAYMENT_METHODS, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
-import { calculateStockValue, toNumber } from '@/lib/sales-inventory';
-import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney } from '@/lib/business-money';
+import { toNumber } from '@/lib/sales-inventory';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA } from '@/lib/business-money';
 import { AlertTriangle, Boxes, PackagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -93,12 +94,12 @@ function extractRestockExpenseId(description: string | null | undefined) {
 export default function InventoryPage() {
   const { user, displayName, isAdmin, isManager } = useAuth();
   const { businessId } = useBusiness();
+  const { financials, loading: financialsLoading } = useBusinessFinancials();
   const { toast } = useToast();
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [movements, setMovements] = useState<StockMovementRow[]>([]);
   const [restocks, setRestocks] = useState<RestockRow[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
-  const [availableMoney, setAvailableMoney] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editingRestock, setEditingRestock] = useState<RestockRow | null>(null);
@@ -116,16 +117,11 @@ export default function InventoryPage() {
   const canManage = isAdmin || isManager;
 
   const load = useCallback(async () => {
-    const [productsRes, movementsRes, restocksRes, salesRes, expensesRes, savingsRes, investmentsRes, otherIncomeRes, investorFundsRes] = await Promise.allSettled([
+    const [productsRes, movementsRes, restocksRes, expensesRes] = await Promise.allSettled([
       loadProductsCompat(false, businessId),
       loadStockMovementsCompat(100, businessId),
-      supabase.from('restocks').select('*').order('restock_date', { ascending: false }),
-      supabase.from('sales').select('total,amount_paid,payment_status,status'),
-      supabase.from('expenses').select('*'),
-      supabase.from('savings').select('amount'),
-      supabase.from('investments').select('amount'),
-      supabase.from('other_income' as any).select('amount'),
-      supabase.from('investor_funding').select('amount'),
+      supabase.from('restocks').select('*').eq('business_id', businessId).order('restock_date', { ascending: false }),
+      supabase.from('expenses').select('*').eq('business_id', businessId),
     ]);
 
     if (productsRes.status === 'fulfilled') {
@@ -155,48 +151,24 @@ export default function InventoryPage() {
       logSupabaseError('inventory.load.expenses', expensesRes.reason);
       setExpenses([]);
     }
-
-    const money = calculateAvailableBusinessMoney({
-      sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as any[]) : [],
-      otherIncome: otherIncomeRes.status === 'fulfilled' ? ((otherIncomeRes.value.data || []) as any[]) : [],
-      expenses: expensesRes.status === 'fulfilled' ? ((expensesRes.value.data || []) as any[]) : [],
-      savings: savingsRes.status === 'fulfilled' ? ((savingsRes.value.data || []) as any[]) : [],
-      investments: investmentsRes.status === 'fulfilled' ? ((investmentsRes.value.data || []) as any[]) : [],
-      investorFunds: investorFundsRes.status === 'fulfilled' ? ((investorFundsRes.value.data || []) as any[]) : [],
-      products: productsRes.status === 'fulfilled' ? ((productsRes.value || []) as ProductRow[]) : [],
-      restocks: restocksRes.status === 'fulfilled' ? ((restocksRes.value.data || []) as RestockRow[]) : [],
-    });
-
-    if (salesRes.status === 'rejected') logSupabaseError('inventory.load.sales', salesRes.reason);
-    if (savingsRes.status === 'rejected') logSupabaseError('inventory.load.savings', savingsRes.reason);
-    if (investmentsRes.status === 'rejected') logSupabaseError('inventory.load.investments', investmentsRes.reason);
-    if (otherIncomeRes.status === 'rejected') logSupabaseError('inventory.load.otherIncome', otherIncomeRes.reason);
-    if (investorFundsRes.status === 'rejected') logSupabaseError('inventory.load.investorFunds', investorFundsRes.reason);
-
-    setAvailableMoney(money);
   }, [businessId]);
 
   useEffect(() => {
     void load();
+    if (!businessId) return;
     const channel = supabase
       .channel('inventory-v2')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_movements' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'savings' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => { void load(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `business_id=eq.${businessId}` }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_movements', filter: `business_id=eq.${businessId}` }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks', filter: `business_id=eq.${businessId}` }, () => { void load(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses', filter: `business_id=eq.${businessId}` }, () => { void load(); })
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [load]);
+  }, [businessId, load]);
 
   const selectedProduct = products.find((product) => product.id === form.product_id) || null;
-  const stockValue = useMemo(() => calculateStockValue(products, 'cost'), [products]);
   const inventoryProducts = useMemo(
     () => [...products].sort((left, right) => left.name.localeCompare(right.name)),
     [products],
@@ -599,12 +571,12 @@ export default function InventoryPage() {
           <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-2xl border border-border bg-background px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Available Business Money</p>
-              <p className="mt-1 text-lg font-semibold">{formatCurrency(availableMoney)}</p>
+              <p className="mt-1 text-lg font-semibold">{financialsLoading ? 'Loading…' : formatCurrency(financials.availableBusinessMoney)}</p>
               <p className="mt-1 text-xs text-muted-foreground">{AVAILABLE_BUSINESS_MONEY_FORMULA}</p>
             </div>
             <div className="rounded-2xl border border-border bg-background px-4 py-3">
               <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Stock Value (Cost)</p>
-              <p className="mt-1 text-lg font-semibold">{formatCurrency(stockValue)}</p>
+              <p className="mt-1 text-lg font-semibold">{financialsLoading ? 'Loading…' : formatCurrency(financials.stockValue)}</p>
             </div>
             {canManage ? (
               <Button onClick={openCreateRestock}><Plus className="mr-2 h-4 w-4" /> Add Restock</Button>
