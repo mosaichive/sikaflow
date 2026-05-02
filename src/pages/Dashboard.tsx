@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCurrency, SIKAFLOW_TOOLTIPS } from '@/lib/constants';
 import { calculateDashboardTotals, getPaidAmount, getIsoDate, sumTodaySales, toNumber } from '@/lib/sales-inventory';
-import { calculateAvailableBusinessMoney, warnIfFinancialInconsistency } from '@/lib/business-money';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney, warnIfFinancialInconsistency } from '@/lib/business-money';
 import { cn } from '@/lib/utils';
 import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
 
@@ -76,6 +76,7 @@ type SavingsRow = {
 };
 type InvestmentRow = { amount: number | string; investment_date: string };
 type FundingRow = { amount: number | string; date_received: string; investor_name?: string | null; reference?: string | null };
+type RestockRow = { total_cost: number | string; status?: string | null; restock_date?: string | null };
 
 type DashboardData = {
   sales: SaleRow[];
@@ -86,6 +87,7 @@ type DashboardData = {
   savings: SavingsRow[];
   investments: InvestmentRow[];
   investorFunds: FundingRow[];
+  restocks: RestockRow[];
 };
 
 function startOfYear(year: number) {
@@ -292,6 +294,7 @@ export default function Dashboard() {
     savings: [],
     investments: [],
     investorFunds: [],
+    restocks: [],
   });
   const [loading, setLoading] = useState(true);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
@@ -309,7 +312,7 @@ export default function Dashboard() {
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes, investorFundsRes] = await Promise.allSettled([
+      const [salesRes, saleItemsRes, productsRes, expensesRes, otherIncomeRes, savingsRes, investmentsRes, investorFundsRes, restocksRes] = await Promise.allSettled([
         supabase.from('sales').select('*').order('sale_date', { ascending: false }),
         supabase.from('sale_items').select('*'),
         loadProductsCompat(false, businessId),
@@ -318,6 +321,7 @@ export default function Dashboard() {
         supabase.from('savings').select('id,amount,savings_date,source,note,reference'),
         supabase.from('investments').select('amount,investment_date'),
         supabase.from('investor_funding').select('amount,date_received,investor_name,reference').order('date_received', { ascending: false }),
+        supabase.from('restocks').select('total_cost,status,restock_date').order('restock_date', { ascending: false }),
       ]);
 
       if (salesRes.status === 'rejected') logSupabaseError('dashboard.load.sales', salesRes.reason);
@@ -328,6 +332,7 @@ export default function Dashboard() {
       if (savingsRes.status === 'rejected') logSupabaseError('dashboard.load.savings', savingsRes.reason);
       if (investmentsRes.status === 'rejected') logSupabaseError('dashboard.load.investments', investmentsRes.reason);
       if (investorFundsRes.status === 'rejected') logSupabaseError('dashboard.load.investorFunds', investorFundsRes.reason);
+      if (restocksRes.status === 'rejected') logSupabaseError('dashboard.load.restocks', restocksRes.reason);
 
       if (salesRes.status === 'fulfilled' && salesRes.value.error) logSupabaseError('dashboard.load.sales', salesRes.value.error);
       if (saleItemsRes.status === 'fulfilled' && saleItemsRes.value.error) logSupabaseError('dashboard.load.saleItems', saleItemsRes.value.error);
@@ -336,6 +341,7 @@ export default function Dashboard() {
       if (savingsRes.status === 'fulfilled' && savingsRes.value.error) logSupabaseError('dashboard.load.savings', savingsRes.value.error);
       if (investmentsRes.status === 'fulfilled' && investmentsRes.value.error) logSupabaseError('dashboard.load.investments', investmentsRes.value.error);
       if (investorFundsRes.status === 'fulfilled' && investorFundsRes.value.error) logSupabaseError('dashboard.load.investorFunds', investorFundsRes.value.error);
+      if (restocksRes.status === 'fulfilled' && restocksRes.value.error) logSupabaseError('dashboard.load.restocks', restocksRes.value.error);
 
       setData({
         sales: salesRes.status === 'fulfilled' ? ((salesRes.value.data || []) as SaleRow[]) : [],
@@ -346,6 +352,7 @@ export default function Dashboard() {
         savings: savingsRes.status === 'fulfilled' ? ((savingsRes.value.data || []) as SavingsRow[]) : [],
         investments: investmentsRes.status === 'fulfilled' ? ((investmentsRes.value.data || []) as InvestmentRow[]) : [],
         investorFunds: investorFundsRes.status === 'fulfilled' ? ((investorFundsRes.value.data || []) as FundingRow[]) : [],
+        restocks: restocksRes.status === 'fulfilled' ? ((restocksRes.value.data || []) as RestockRow[]) : [],
       });
     } finally {
       setLoading(false);
@@ -365,6 +372,7 @@ export default function Dashboard() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'savings' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, refresh)
       .subscribe();
 
     return () => {
@@ -444,6 +452,7 @@ export default function Dashboard() {
         savings: data.savings,
         investments: data.investments,
         investorFunds: data.investorFunds,
+        restocks: data.restocks,
       }),
     [data],
   );
@@ -566,7 +575,7 @@ export default function Dashboard() {
             title="Available Business Money"
             value={formatCurrency(availableBusinessMoney)}
             icon={WalletCards}
-            helper="Business-wide cash: paid sales + other income + investor funds - expenses - expensed restocks - savings - investments"
+            helper={AVAILABLE_BUSINESS_MONEY_FORMULA}
             tooltip={SIKAFLOW_TOOLTIPS.availableBusinessMoney}
           />
           <MetricCard

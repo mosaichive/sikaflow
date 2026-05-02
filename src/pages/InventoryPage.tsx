@@ -20,14 +20,11 @@ import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney } fro
 import { AlertTriangle, Boxes, PackagePlus, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  getErrorMessage,
-  insertExpenseRecord,
   insertRestockRecord,
   insertStockMovementCompat,
   loadProductsCompat,
   loadStockMovementsCompat,
   logSupabaseError,
-  updateExpenseRecord,
   updateRestockRecord,
 } from '@/lib/workspace';
 
@@ -72,30 +69,21 @@ type RestockRow = {
   status: string;
 };
 
-type ExpenseRow = {
+type InventoryHistoryRow = {
   id: string;
-  amount: number | string;
-  category: string;
-  description: string | null;
-  expense_date: string;
-  payment_method: string | null;
-};
-
-function makeRestockExpenseMarker(restockId: string) {
-  return `[RESTOCK:${restockId}]`;
-}
-
-function buildRestockExpenseDescription({
-  restockId,
-  productName,
-  note,
-}: {
-  restockId: string;
+  entryType: 'opening_stock' | 'restock';
+  date: string;
   productName: string;
-  note?: string | null;
-}) {
-  return `${makeRestockExpenseMarker(restockId)} Inventory Purchase (Restock) for ${productName}${note ? ` - ${note}` : ''}`;
-}
+  category: string;
+  quantityAdded: number;
+  costPerUnit: number;
+  totalCost: number;
+  paymentMethod: string | null;
+  deductionStatus: string;
+  noteReference: string | null;
+  createdByName: string | null;
+  editableRestock: RestockRow | null;
+};
 
 function extractRestockExpenseId(description: string | null | undefined) {
   const match = String(description ?? '').match(/\[RESTOCK:([a-f0-9-]+)\]/i);
@@ -103,7 +91,7 @@ function extractRestockExpenseId(description: string | null | undefined) {
 }
 
 export default function InventoryPage() {
-  const { user, displayName, isAdmin, isManager, isDistributor } = useAuth();
+  const { user, displayName, isAdmin, isManager } = useAuth();
   const { businessId } = useBusiness();
   const { toast } = useToast();
   const [products, setProducts] = useState<ProductRow[]>([]);
@@ -123,7 +111,6 @@ export default function InventoryPage() {
     selling_price: '0',
     payment_method: PAYMENT_METHODS[0].value,
     description: '',
-    record_restocks_expense: false,
   });
 
   const canManage = isAdmin || isManager;
@@ -248,15 +235,61 @@ export default function InventoryPage() {
   }, [selectedProduct]);
 
   const restockExpenseByRestockId = useMemo(() => {
-    const next = new Map<string, ExpenseRow>();
+    const next = new Map<string, string>();
     for (const expense of expenses) {
       const restockId = extractRestockExpenseId(expense.description);
       if (restockId) {
-        next.set(restockId, expense);
+        next.set(restockId, expense.id);
       }
     }
     return next;
   }, [expenses]);
+
+  const inventoryHistory = useMemo<InventoryHistoryRow[]>(() => {
+    const productMap = new Map(products.map((product) => [product.id, product]));
+    const openingStockRows = movements
+      .filter((movement) => movement.movement_type === 'opening_stock')
+      .map((movement) => {
+        const product = movement.product_id ? productMap.get(movement.product_id) : undefined;
+        const quantityAdded = Math.max(0, toNumber(movement.quantity_change));
+        const costPerUnit = toNumber(movement.unit_cost ?? product?.cost_price ?? 0);
+        return {
+          id: `opening-${movement.id}`,
+          entryType: 'opening_stock' as const,
+          date: movement.movement_date,
+          productName: product?.name || 'Opening Stock',
+          category: product?.category || '—',
+          quantityAdded,
+          costPerUnit,
+          totalCost: quantityAdded * costPerUnit,
+          paymentMethod: null,
+          deductionStatus: 'Not deducted',
+          noteReference: movement.note || 'Opening Stock',
+          createdByName: movement.created_by_name || null,
+          editableRestock: null,
+        };
+      });
+
+    const restockRows = restocks.map((restock) => ({
+      id: restock.id,
+      entryType: 'restock' as const,
+      date: restock.restock_date,
+      productName: restock.product_name,
+      category: restock.category || '—',
+      quantityAdded: toNumber(restock.quantity_added),
+      costPerUnit: toNumber(restock.cost_price_per_unit),
+      totalCost: toNumber(restock.total_cost),
+      paymentMethod: restock.payment_method || null,
+      deductionStatus: 'Deducted from Available Money',
+      noteReference: restock.note || restock.reference || null,
+      createdByName: restock.recorded_by_name || null,
+      editableRestock: restock,
+    }));
+
+    return [...restockRows, ...openingStockRows].sort(
+      (left, right) => new Date(right.date).getTime() - new Date(left.date).getTime(),
+    );
+  }, [movements, products, restocks]);
 
   const getStockStatus = useCallback((product: ProductRow) => {
     const quantity = toNumber(product.quantity);
@@ -298,7 +331,6 @@ export default function InventoryPage() {
       selling_price: '0',
       payment_method: PAYMENT_METHODS[0].value,
       description: '',
-      record_restocks_expense: false,
     });
     setEditingRestock(null);
   };
@@ -319,54 +351,15 @@ export default function InventoryPage() {
       selling_price: String(Number(product?.selling_price || 0)),
       payment_method: restock.payment_method || PAYMENT_METHODS[0].value,
       description: restock.note || restock.reference || '',
-      record_restocks_expense: restockExpenseByRestockId.has(restock.id),
     });
     setDialogOpen(true);
   };
 
-  const syncRestockExpense = async ({
-    restockId,
-    productName,
-    totalCost,
-    paymentMethod,
-    note,
-    expenseDate,
-    enabled,
-  }: {
-    restockId: string;
-    productName: string;
-    totalCost: number;
-    paymentMethod: string;
-    note: string;
-    expenseDate: string;
-    enabled: boolean;
-  }) => {
-    const existingExpense = restockExpenseByRestockId.get(restockId) || null;
-    if (!enabled) {
-      if (existingExpense) {
-        const { error } = await supabase.from('expenses').delete().eq('id', existingExpense.id);
-        if (error) throw error;
-      }
-      return;
-    }
-
-    const payload = {
-      business_id: businessId,
-      category: 'Restock',
-      description: buildRestockExpenseDescription({ restockId, productName, note }),
-      amount: totalCost,
-      payment_method: paymentMethod,
-      expense_date: expenseDate,
-      recorded_by: user?.id,
-      recorded_by_name: displayName || user?.email || '',
-    };
-
-    if (existingExpense) {
-      await updateExpenseRecord(existingExpense.id, payload);
-      return;
-    }
-
-    await insertExpenseRecord(payload);
+  const cleanupLegacyRestockExpense = async (restockId: string) => {
+    const existingExpenseId = restockExpenseByRestockId.get(restockId) || null;
+    if (!existingExpenseId) return;
+    const { error } = await supabase.from('expenses').delete().eq('id', existingExpenseId);
+    if (error) throw error;
   };
 
   const upsertRestockMovement = async ({
@@ -498,15 +491,7 @@ export default function InventoryPage() {
           } as RestockRow)
         : ((await insertRestockRecord(restockPayload)) as unknown as RestockRow);
 
-      await syncRestockExpense({
-        restockId: savedRestock.id,
-        productName: selectedProduct.name,
-        totalCost,
-        paymentMethod: form.payment_method,
-        note: form.description,
-        expenseDate: movementDate,
-        enabled: form.record_restocks_expense,
-      });
+      await cleanupLegacyRestockExpense(savedRestock.id);
 
       const { error: productError } = await supabase
         .from('products')
@@ -533,9 +518,7 @@ export default function InventoryPage() {
       resetForm();
       toast({
         title: editingRestock ? 'Restock updated' : 'Restock saved',
-        description: form.record_restocks_expense
-          ? 'Stock, restock history, and expense records are all updated.'
-          : 'Stock increased and restock history updated.',
+        description: 'Stock, stock value, and available business money were recalculated.',
       });
       void load();
     } catch (error) {
@@ -570,18 +553,14 @@ export default function InventoryPage() {
         if (productError) throw productError;
       }
 
-      const linkedExpense = restockExpenseByRestockId.get(restock.id);
-      if (linkedExpense) {
-        const { error: expenseError } = await supabase.from('expenses').delete().eq('id', linkedExpense.id);
-        if (expenseError) throw expenseError;
-      }
+      await cleanupLegacyRestockExpense(restock.id);
 
       await deleteRestockMovement(restock.id);
 
       const { error: restockError } = await supabase.from('restocks').delete().eq('id', restock.id);
       if (restockError) throw restockError;
 
-      toast({ title: 'Restock deleted', description: 'Stock and linked expense values have been recalculated.' });
+      toast({ title: 'Restock deleted', description: 'Stock and available business money were recalculated.' });
       void load();
     } catch (error) {
       toast({
@@ -715,18 +694,12 @@ export default function InventoryPage() {
                 </div>
               </div>
 
-              <label className="flex items-start gap-3 rounded-2xl border border-border/60 p-4">
-                <input
-                  type="checkbox"
-                  checked={form.record_restocks_expense}
-                  onChange={(event) => setForm((current) => ({ ...current, record_restocks_expense: event.target.checked }))}
-                  className="mt-1"
-                />
-                <div>
-                  <p className="text-sm font-medium">Record this restock as expense</p>
-                  <p className="text-xs text-muted-foreground">If enabled, Total Cost is deducted from available business money and logged as a matching expense. If cash is low, you&apos;ll get a warning only.</p>
-                </div>
-              </label>
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                <p className="text-sm font-medium">Restock money logic</p>
+                <p className="text-xs text-muted-foreground">
+                  Restocks are automatically deducted from Available Business Money. Opening Stock is not deducted.
+                </p>
+              </div>
 
               <Button type="submit" className="w-full" disabled={saving}>
                 {saving ? 'Saving...' : editingRestock ? 'Update Restock' : 'Save Restock'}
@@ -784,7 +757,7 @@ export default function InventoryPage() {
                 <EmptyState
                   icon={<Boxes className="h-7 w-7 text-muted-foreground" />}
                   title="No products in inventory yet"
-                  description="Add products first, then use Add Restock to bring them into stock."
+                  description="Add products first, then use Add Restock to bring them into stock. Products with Opening Stock stay visible here too."
                 />
               )}
             </CardContent>
@@ -801,53 +774,63 @@ export default function InventoryPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
+                        <TableHead>Type</TableHead>
                         <TableHead>Product</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Quantity Added</TableHead>
                         <TableHead>Cost Per Unit</TableHead>
                         <TableHead>Total Cost</TableHead>
                         <TableHead>Payment Method</TableHead>
-                        <TableHead>Expense Status</TableHead>
+                        <TableHead>Deduction Status</TableHead>
                         <TableHead>Note / Reference</TableHead>
                         <TableHead>Created By</TableHead>
                         {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {restocks.map((restock) => {
-                        const linkedExpense = restockExpenseByRestockId.get(restock.id);
+                      {inventoryHistory.map((entry) => {
+                        const isOpeningStock = entry.entryType === 'opening_stock';
                         return (
-                          <TableRow key={restock.id}>
-                            <TableCell>{new Date(restock.restock_date).toLocaleDateString('en-GH')}</TableCell>
-                            <TableCell className="font-medium">{restock.product_name}</TableCell>
-                            <TableCell>{restock.category || '—'}</TableCell>
-                            <TableCell>{restock.quantity_added}</TableCell>
-                            <TableCell>{formatCurrency(Number(restock.cost_price_per_unit || 0))}</TableCell>
-                            <TableCell>{formatCurrency(Number(restock.total_cost || 0))}</TableCell>
-                            <TableCell>{PAYMENT_METHODS.find((method) => method.value === restock.payment_method)?.label ?? restock.payment_method}</TableCell>
+                          <TableRow key={entry.id}>
+                            <TableCell>{new Date(entry.date).toLocaleDateString('en-GH')}</TableCell>
                             <TableCell>
-                              <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${linkedExpense ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
-                                {linkedExpense ? 'Recorded as Expense' : 'Stock Only'}
+                              <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${isOpeningStock ? 'bg-sky-500/10 text-sky-300' : 'bg-primary/10 text-primary'}`}>
+                                {isOpeningStock ? 'Opening Stock' : 'Restock'}
                               </span>
                             </TableCell>
-                            <TableCell className="max-w-[220px] truncate">{restock.note || restock.reference || '—'}</TableCell>
-                            <TableCell>{restock.recorded_by_name || '—'}</TableCell>
+                            <TableCell className="font-medium">{entry.productName}</TableCell>
+                            <TableCell>{entry.category || '—'}</TableCell>
+                            <TableCell>{entry.quantityAdded}</TableCell>
+                            <TableCell>{formatCurrency(entry.costPerUnit)}</TableCell>
+                            <TableCell>{formatCurrency(entry.totalCost)}</TableCell>
+                            <TableCell>{entry.paymentMethod ? (PAYMENT_METHODS.find((method) => method.value === entry.paymentMethod)?.label ?? entry.paymentMethod) : '—'}</TableCell>
+                            <TableCell>
+                              <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${isOpeningStock ? 'bg-muted text-muted-foreground' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                {entry.deductionStatus}
+                              </span>
+                            </TableCell>
+                            <TableCell className="max-w-[220px] truncate">{entry.noteReference || '—'}</TableCell>
+                            <TableCell>{entry.createdByName || '—'}</TableCell>
                             {canManage ? (
                               <TableCell className="text-right">
-                                <div className="flex items-center justify-end gap-1">
-                                  <Button variant="ghost" size="icon" onClick={() => openEditRestock(restock)}>
-                                    <Pencil className="h-4 w-4" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="text-destructive"
-                                    disabled={deletingRestockId === restock.id}
-                                    onClick={() => void deleteRestock(restock)}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </div>
+                                {entry.editableRestock ? (
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Button variant="ghost" size="icon" onClick={() => openEditRestock(entry.editableRestock!)}>
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="text-destructive"
+                                      disabled={deletingRestockId === entry.editableRestock.id}
+                                      onClick={() => void deleteRestock(entry.editableRestock!)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">Setup only</span>
+                                )}
                               </TableCell>
                             ) : null}
                           </TableRow>
@@ -860,7 +843,7 @@ export default function InventoryPage() {
                 <EmptyState
                   icon={<PackagePlus className="h-7 w-7 text-muted-foreground" />}
                   title="No restocks yet"
-                  description="Restocks will appear here with cost, payment, expense status, and edit/delete actions."
+                  description="Opening Stock and restocks will appear here with deduction status, payment details, and edit/delete actions."
                 />
               )}
             </CardContent>

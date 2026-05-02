@@ -23,7 +23,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { BarChart3, CalendarRange, Download, FileText, FilterX, PackageSearch, Receipt, TrendingUp, WalletCards } from 'lucide-react';
 import { buildReportStatement, downloadReportSlipPdf } from '@/lib/report-slip';
-import { loadProductsCompat, logSupabaseError } from '@/lib/workspace';
+import { loadProductsCompat, loadStockMovementsCompat, logSupabaseError } from '@/lib/workspace';
 
 type RawReportData = {
   sales: any[];
@@ -35,6 +35,7 @@ type RawReportData = {
   restocks: any[];
   otherIncome: any[];
   products: any[];
+  stockMovements: any[];
 };
 
 function formatDateInput(date: Date) {
@@ -146,6 +147,7 @@ export default function ReportsPage() {
     restocks: [],
     otherIncome: [],
     products: [],
+    stockMovements: [],
   });
 
   const { from, to } = useMemo(
@@ -157,7 +159,7 @@ export default function ReportsPage() {
 
   const fetchReport = useCallback(async () => {
     setLoading(true);
-    const [salesRes, itemsRes, expRes, savRes, invRes, funRes, restockRes, otherIncomeRes, productsRes] = await Promise.allSettled([
+    const [salesRes, itemsRes, expRes, savRes, invRes, funRes, restockRes, otherIncomeRes, productsRes, stockMovementsRes] = await Promise.allSettled([
       supabase.from('sales').select('*').order('sale_date', { ascending: false }),
       supabase.from('sale_items').select('*'),
       supabase.from('expenses').select('*').order('expense_date', { ascending: false }),
@@ -167,6 +169,7 @@ export default function ReportsPage() {
       supabase.from('restocks').select('*').order('restock_date', { ascending: false }),
       supabase.from('other_income' as any).select('*').order('income_date', { ascending: false }),
       loadProductsCompat(false, businessId),
+      loadStockMovementsCompat(500, businessId),
     ]);
 
     setRaw({
@@ -179,6 +182,7 @@ export default function ReportsPage() {
       restocks: restockRes.status === 'fulfilled' ? (restockRes.value.data ?? []) : [],
       otherIncome: otherIncomeRes.status === 'fulfilled' ? (otherIncomeRes.value.data ?? []) : [],
       products: productsRes.status === 'fulfilled' ? (productsRes.value ?? []) : [],
+      stockMovements: stockMovementsRes.status === 'fulfilled' ? (stockMovementsRes.value ?? []) : [],
     });
     if (salesRes.status === 'rejected') logSupabaseError('reports.load.sales', salesRes.reason, { businessId });
     if (itemsRes.status === 'rejected') logSupabaseError('reports.load.saleItems', itemsRes.reason, { businessId });
@@ -189,6 +193,7 @@ export default function ReportsPage() {
     if (restockRes.status === 'rejected') logSupabaseError('reports.load.restocks', restockRes.reason, { businessId });
     if (otherIncomeRes.status === 'rejected') logSupabaseError('reports.load.otherIncome', otherIncomeRes.reason, { businessId });
     if (productsRes.status === 'rejected') logSupabaseError('reports.load.products', productsRes.reason, { businessId });
+    if (stockMovementsRes.status === 'rejected') logSupabaseError('reports.load.stockMovements', stockMovementsRes.reason, { businessId });
     setLoading(false);
   }, [businessId]);
 
@@ -205,6 +210,7 @@ export default function ReportsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, () => { void fetchReport(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => { void fetchReport(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, () => { void fetchReport(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_movements' }, () => { void fetchReport(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'savings' }, () => { void fetchReport(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => { void fetchReport(); })
       .subscribe();
@@ -271,6 +277,23 @@ export default function ReportsPage() {
       restocks: filtered.restocks,
     });
   }, [filtered, raw.products, recognizedSaleItems]);
+
+  const openingStockMovements = useMemo(
+    () =>
+      raw.stockMovements.filter(
+        (movement) => movement.movement_type === 'opening_stock' && inDateRange(movement.movement_date, from, to),
+      ),
+    [from, raw.stockMovements, to],
+  );
+
+  const openingStockValue = useMemo(
+    () =>
+      openingStockMovements.reduce(
+        (sum, movement) => sum + Math.max(0, Number(movement.quantity_change ?? 0)) * Math.max(0, Number(movement.unit_cost ?? 0)),
+        0,
+      ),
+    [openingStockMovements],
+  );
 
   const periodSales = useMemo(() => {
     const todayStart = new Date();
@@ -389,10 +412,11 @@ export default function ReportsPage() {
         fundings: raw.funding,
         restocks: raw.restocks,
         products: raw.products,
+        openingStockMovements,
         from,
         to,
       }),
-    [from, raw, to],
+    [from, openingStockMovements, raw, to],
   );
 
   const yearOptions = useMemo(() => {
@@ -515,12 +539,13 @@ export default function ReportsPage() {
 
         {invalidRange ? <p className="text-sm text-destructive">The start date must be before the end date.</p> : null}
 
-        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-7">
+        <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-8">
           <ReportMetric label="Available Business Money" value={formatCurrency(reportStats.availableBusinessMoney)} />
           <ReportMetric label="Sales Revenue" value={formatCurrency(reportStats.paidSalesRevenue)} />
           <ReportMetric label="COGS" value={formatCurrency(reportStats.cogs)} />
           <ReportMetric label="Expenses" value={formatCurrency(reportStats.operatingExpenses)} />
           <ReportMetric label="Profit" value={formatCurrency(reportStats.profit)} />
+          <ReportMetric label="Opening Stock" value={formatCurrency(openingStockValue)} />
           <ReportMetric label="Restock Spending" value={formatCurrency(reportStats.totalRestockSpending)} />
           <ReportMetric label="Stock Value (Cost)" value={formatCurrency(reportStats.stockValueCost)} />
         </div>
@@ -540,7 +565,7 @@ export default function ReportsPage() {
                 Financial Statement PDF
               </CardTitle>
               <p className="mt-2 text-sm text-muted-foreground">
-                Download a clean transaction statement covering sales, other income, expenses, savings, investments, investor funds, and restocks.
+                Download a clean transaction statement covering sales, other income, expenses, savings, investments, investor funds, opening stock, and restocks.
               </p>
             </div>
             <Button onClick={() => void handleDownloadSlip()} disabled={invalidRange || statement.rows.length === 0 || pdfLoading}>

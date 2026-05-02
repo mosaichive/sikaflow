@@ -45,6 +45,7 @@ type ExpenseLike = AmountLike & {
 type RestockLike = {
   id?: string | null;
   total_cost?: NumberLike;
+  status?: string | null;
 };
 
 export type FinancialSnapshot = {
@@ -154,8 +155,11 @@ export function calculateOperatingExpenses(rows: ExpenseLike[]) {
   return rows.reduce((sum, row) => sum + (isRestockExpenseRow(row) ? 0 : toNumber(row.amount)), 0);
 }
 
-export function calculateRestockExpenseSpending(rows: ExpenseLike[]) {
-  return rows.reduce((sum, row) => sum + (isRestockExpenseRow(row) ? toNumber(row.amount) : 0), 0);
+export function calculateRestockExpenseSpending(rows: RestockLike[]) {
+  return rows.reduce((sum, row) => {
+    if (isCancelledStatus(row.status)) return sum;
+    return sum + toNumber(row.total_cost);
+  }, 0);
 }
 
 export function calculateStockLeft(products: ProductLike[]) {
@@ -210,7 +214,8 @@ export function calculateFinancialSnapshot({
   const totalInvestorFunds = calculateTotalOtherIncome(investorFunds);
   const totalIncome = paidSalesRevenue + totalOtherIncome + totalInvestorFunds;
   const operatingExpenses = calculateOperatingExpenses(expenses);
-  const restockExpenseSpending = calculateRestockExpenseSpending(expenses);
+  const totalRestockSpending = calculateRestockSpending(restocks);
+  const restockExpenseSpending = calculateRestockExpenseSpending(restocks);
   const totalSavings = calculateTotalExpenses(savings);
   const totalInvestments = calculateTotalExpenses(investments);
   const totalMoneyOut = operatingExpenses + restockExpenseSpending + totalSavings + totalInvestments;
@@ -239,7 +244,7 @@ export function calculateFinancialSnapshot({
     stockValueSelling,
     lowStockCount: calculateLowStockCount(products),
     negativeStockCount: calculateNegativeStockCount(products),
-    totalRestockSpending: calculateRestockSpending(restocks),
+    totalRestockSpending,
   };
 }
 

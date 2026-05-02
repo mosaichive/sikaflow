@@ -14,7 +14,7 @@ export {
 };
 
 export const AVAILABLE_BUSINESS_MONEY_FORMULA =
-  'Business-wide cash: paid sales + other income + investor funds - expenses - expensed restocks - savings - investments';
+  'Business-wide cash: paid sales + other income + investor funds - expenses - restocks - savings - investments';
 
 export type AvailableBusinessMoneyArgs = Parameters<typeof calculateFinancialSnapshot>[0];
 

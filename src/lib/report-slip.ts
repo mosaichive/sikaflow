@@ -3,7 +3,7 @@ import autoTable from 'jspdf-autotable';
 import sikaflowLogo from '@/assets/sikaflow-logo.png';
 import notoSansFontUrl from '@/assets/fonts/NotoSans-VariableFont.ttf';
 import { formatCurrency } from '@/lib/constants';
-import { calculateFinancialSnapshot, getPaidAmount, getRestockExpenseIdFromDescription, isRecognizedSale, isRestockExpenseRow } from '@/lib/sales-inventory';
+import { calculateFinancialSnapshot, getPaidAmount, isRecognizedSale, isRestockExpenseRow } from '@/lib/sales-inventory';
 
 export type ReportRangePreset = 'today' | 'week' | 'month' | 'year' | 'custom';
 
@@ -24,6 +24,7 @@ export type ReportStatementSummary = {
   totalSavings: number;
   totalInvestments: number;
   totalInvestorFunds: number;
+  totalOpeningStock: number;
   totalRestocks: number;
   cogs: number;
   profit: number;
@@ -41,6 +42,7 @@ type ReportSourceArgs = {
   fundings: any[];
   restocks: any[];
   products: any[];
+  openingStockMovements?: any[];
   from: string;
   to: string;
 };
@@ -132,12 +134,19 @@ function orderedTransactions({
   investments,
   fundings,
   restocks,
-  restockExpenseIds,
-}: Pick<ReportSourceArgs, 'sales' | 'expenses' | 'otherIncome' | 'savings' | 'investments' | 'fundings' | 'restocks'> & {
-  restockExpenseIds: Set<string>;
-}) {
+  openingStockMovements = [],
+}: Pick<ReportSourceArgs, 'sales' | 'expenses' | 'otherIncome' | 'savings' | 'investments' | 'fundings' | 'restocks' | 'openingStockMovements'>) {
   const nonRestockExpenses = expenses.filter((expense) => !isRestockExpenseRow(expense));
   const rows: BaseTransaction[] = [
+    ...openingStockMovements.map((movement) => ({
+      date: movement.movement_date,
+      timestamp: asTimestamp(movement.movement_date),
+      reference: transactionRef('OPN', movement.reference, movement.id),
+      type: 'Opening Stock',
+      description: [movement.note, 'Not deducted from available money'].filter(Boolean).join(' • ') || 'Opening stock',
+      moneyIn: 0,
+      moneyOut: 0,
+    })),
     ...sales
       .filter((sale) => isRecognizedSale(sale))
       .map((sale) => ({
@@ -209,10 +218,10 @@ function orderedTransactions({
       description: [
         restock.product_name,
         restock.supplier,
-        restockExpenseIds.has(String(restock.id)) ? 'Recorded as expense' : 'Stock only',
+        'Deducted from available money',
       ].filter(Boolean).join(' • ') || 'Inventory purchase',
       moneyIn: 0,
-      moneyOut: restockExpenseIds.has(String(restock.id)) ? Number(restock.total_cost ?? 0) : 0,
+      moneyOut: Number(restock.total_cost ?? 0),
     })),
   ];
 
@@ -229,13 +238,11 @@ export function buildReportStatement({
   fundings,
   restocks,
   products,
+  openingStockMovements = [],
   from,
   to,
 }: ReportSourceArgs) {
-  const restockExpenseIds = new Set(
-    expenses.map((expense) => getRestockExpenseIdFromDescription(expense.description)).filter(Boolean).map(String),
-  );
-  const ordered = orderedTransactions({ sales, expenses, otherIncome, savings, investments, fundings, restocks, restockExpenseIds });
+  const ordered = orderedTransactions({ sales, expenses, otherIncome, savings, investments, fundings, restocks, openingStockMovements });
   const fromMs = startOfDayMs(from);
   const toMs = endOfDayMs(to);
   const inRange = (value: string | null | undefined) => {
@@ -272,6 +279,7 @@ export function buildReportStatement({
   const filteredInvestments = investments.filter((investment) => inRange(investment.investment_date));
   const filteredFundings = fundings.filter((funding) => inRange(funding.date_received));
   const filteredRestocks = restocks.filter((restock) => inRange(restock.restock_date));
+  const filteredOpeningStock = openingStockMovements.filter((movement) => inRange(movement.movement_date));
   const financials = calculateFinancialSnapshot({
     sales: filteredSales,
     saleItems: filteredSaleItems,
@@ -301,6 +309,10 @@ export function buildReportStatement({
       totalSavings: financials.totalSavings,
       totalInvestments: financials.totalInvestments,
       totalInvestorFunds: financials.investorFunds,
+      totalOpeningStock: filteredOpeningStock.reduce(
+        (sum, movement) => sum + Math.max(0, Number(movement.quantity_change ?? 0)) * Math.max(0, Number(movement.unit_cost ?? 0)),
+        0,
+      ),
       totalRestocks: financials.totalRestockSpending,
       cogs: financials.cogs,
       profit: financials.profit,
@@ -620,10 +632,11 @@ export async function downloadReportSlipPdf({
     body: [
       ['Total Sales', formatCurrency(summary.totalSales), 'Other Income', formatCurrency(summary.totalOtherIncome)],
       ['COGS', formatCurrency(summary.cogs), 'Total Expenses', formatCurrency(summary.totalExpenses)],
-      ['Total Restocks', formatCurrency(summary.totalRestocks), 'Total Savings', formatCurrency(summary.totalSavings)],
-      ['Total Investments', formatCurrency(summary.totalInvestments), 'Total Investor Funds', formatCurrency(summary.totalInvestorFunds)],
-      ['Profit', formatCurrency(summary.profit), 'Stock Value (Cost)', formatCurrency(summary.stockValueCost)],
-      ['Available Business Money', formatCurrency(summary.availableBusinessMoney), 'Closing Balance', formatCurrency(closingBalance)],
+      ['Opening Stock', formatCurrency(summary.totalOpeningStock), 'Total Restocks', formatCurrency(summary.totalRestocks)],
+      ['Total Savings', formatCurrency(summary.totalSavings), 'Total Investments', formatCurrency(summary.totalInvestments)],
+      ['Total Investor Funds', formatCurrency(summary.totalInvestorFunds), 'Stock Value (Cost)', formatCurrency(summary.stockValueCost)],
+      ['Profit', formatCurrency(summary.profit), 'Available Business Money', formatCurrency(summary.availableBusinessMoney)],
+      ['Closing Balance', formatCurrency(closingBalance), '', ''],
     ],
     styles: {
       font: 'NotoSans',
@@ -646,7 +659,7 @@ export async function downloadReportSlipPdf({
   doc.setFontSize(8.5);
   doc.setTextColor(...COLORS.muted);
   doc.text(
-    `Cash movement reflects paid sales, other income, investor funds, and only restocks recorded as expense. Profit uses paid sales revenue minus COGS and operating expenses.`,
+    `Cash movement reflects paid sales, other income, investor funds, savings, investments, and all restocks. Opening Stock is shown separately and does not reduce available business money. Profit uses paid sales revenue minus COGS and operating expenses.`,
     40,
     noteY,
     { maxWidth: pageWidth - 80 },

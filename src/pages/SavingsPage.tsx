@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency } from '@/lib/constants';
-import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney, calculateFinancialSnapshot } from '@/lib/business-money';
+import { AVAILABLE_BUSINESS_MONEY_FORMULA, calculateAvailableBusinessMoney } from '@/lib/business-money';
 import { useBusiness } from '@/context/BusinessContext';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -49,6 +49,12 @@ type AmountRow = {
   amount: number | string;
   category?: string | null;
   description?: string | null;
+};
+
+type RestockMoneyRow = {
+  amount?: never;
+  total_cost: number | string;
+  status?: string | null;
 };
 
 const emptySavingForm = {
@@ -133,6 +139,7 @@ export default function SavingsPage() {
   const [otherIncome, setOtherIncome] = useState<AmountRow[]>([]);
   const [investments, setInvestments] = useState<AmountRow[]>([]);
   const [investorFunds, setInvestorFunds] = useState<AmountRow[]>([]);
+  const [restocks, setRestocks] = useState<RestockMoneyRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [savingOpen, setSavingOpen] = useState(false);
@@ -146,7 +153,7 @@ export default function SavingsPage() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
 
-    const [destinationsRes, savingsRes, salesRes, expensesRes, otherIncomeRes, investmentsRes, investorFundsRes] = await Promise.allSettled([
+    const [destinationsRes, savingsRes, salesRes, expensesRes, otherIncomeRes, investmentsRes, investorFundsRes, restocksRes] = await Promise.allSettled([
       supabase.from('bank_accounts').select('*').order('created_at', { ascending: false }),
       supabase.from('savings').select('*').order('savings_date', { ascending: false }),
       supabase.from('sales').select('id,total,amount_paid,payment_status,status,sale_date').order('sale_date', { ascending: false }),
@@ -154,6 +161,7 @@ export default function SavingsPage() {
       supabase.from('other_income' as any).select('amount'),
       supabase.from('investments').select('amount'),
       supabase.from('investor_funding').select('amount'),
+      supabase.from('restocks').select('total_cost,status').order('restock_date', { ascending: false }),
     ]);
 
     if (destinationsRes.status === 'fulfilled') {
@@ -212,6 +220,14 @@ export default function SavingsPage() {
       setInvestorFunds([]);
     }
 
+    if (restocksRes.status === 'fulfilled') {
+      if (restocksRes.value.error) logSupabaseError('savings.load.restocks', restocksRes.value.error, { businessId });
+      setRestocks((restocksRes.value.data || []) as RestockMoneyRow[]);
+    } else {
+      logSupabaseError('savings.load.restocks', restocksRes.reason, { businessId });
+      setRestocks([]);
+    }
+
     setLoading(false);
   }, [businessId]);
 
@@ -227,25 +243,13 @@ export default function SavingsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'other_income' }, () => { void fetchAll(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investments' }, () => { void fetchAll(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'investor_funding' }, () => { void fetchAll(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'restocks' }, () => { void fetchAll(); })
       .subscribe();
 
     return () => {
       void supabase.removeChannel(channel);
     };
   }, [fetchAll]);
-
-  const money = useMemo(
-    () =>
-      calculateFinancialSnapshot({
-        sales,
-        otherIncome,
-        expenses,
-        savings,
-        investments,
-        investorFunds,
-      }),
-    [expenses, investments, investorFunds, otherIncome, sales, savings],
-  );
 
   const availableBusinessMoney = useMemo(
     () =>
@@ -256,8 +260,9 @@ export default function SavingsPage() {
         savings,
         investments,
         investorFunds,
+        restocks,
       }),
-    [expenses, investments, investorFunds, otherIncome, sales, savings],
+    [expenses, investments, investorFunds, otherIncome, restocks, sales, savings],
   );
 
   const totalSavings = savings.reduce((sum, row) => sum + Number(row.amount || 0), 0);
